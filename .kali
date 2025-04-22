@@ -11,6 +11,24 @@ export LPORT=""
 export USERNAME=""
 export PASSWORD=""
 
+### git
+# reduce .git size
+#git gc --aggressive --prune=now
+# Ensure stable branch exists ######
+# git checkout main
+# git pull origin main
+# Create and push dev branch #####
+# git checkout -b dev
+# git push -u origin dev
+# Feature Work ######
+# git checkout dev
+# git checkout -b feature/foo
+# Release to Stable ########
+# git checkout main 
+# git merge --no-ff dev
+# git tag -a v1.2.0 -m 'Release v1.2.0'
+# git push origin main --tags
+
 #### Compression ####
 
 
@@ -29,7 +47,7 @@ alias sautorecon='(){sudo autorecon -t "$1" -vv --plugins-dir /root/.config/Auto
 
 ######### WEB ########
 alias curlburp="curl --insecure -x 127.0.0.1:8080 --location '$WEB_SITE' \
---header 'apikey:GTkoEM5UMCy0xjOMabM00B9WaLA3GW4d' -i"
+--header 'apikey:$BURP_API_KEY' -i"
 alias gedit='(){gedit "$@" &}'
 alias autorecon'(){sudo -E $(which autorecon) -c $AUTORECON_CONFIG "$@"}'
 ########## OSINT #############
