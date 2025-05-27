@@ -1,0 +1,45 @@
+Script started on 2025-05-26 19:39:10-04:00 [TERM="xterm-256color" TTY="/dev/pts/3" COLUMNS="81" LINES="42"]
+                                                                                 ]0;kali@KALI-WKS: ~/ToolBox[0m[27m[24m[J[32m┌──([1m[32m[34mkali㉿KALI-WKS[0m[34m[32m)-[[1m[32m[39m~/ToolBox[0m[32m]
+└─[1m[32m[34m$[0m[34m[39m [K[?1h=[?2004hl[36ml[39m[36ml[39m[38;2;153;153;153ml[39m[39m [39m e[4me[24m[4me[24m[38;2;153;153;153mc[39m[38;2;153;153;153mho 'context /v0/user endpoint with some external service errors do[39m
+[38;2;153;153;153mdescribe GET v0/contact_us/inquiries do[39m[K
+[38;2;153;153;153mdescribe GET /v0/notifications/dismissed_statuses/{subject} do[39m[K
+[38;2;153;153;153mdescribe GET /v0/notifications/{subject} do[39m[K
+[38;2;153;153;153mdescribe PATCH /v0/notifications/dismissed_statuses/{subject} do[39m[K
+[38;2;153;153;153mdescribe PATCH /v0/notifications/{subject} do[39m[K
+[38;2;153;153;153mdescribe POST v0/contact_us/inquiries do[39m[K
+[38;2;153;153;153mdescribe POST /v0/notifications/dismissed_statuses do[39m[K
+[38;2;153;153;153mdescribe POST /v0/notifications do[39m[K
+[38;2;153;153;153mdescribe POST v0/virtual_agent_token do[39m[K
+[38;2;153;153;153mdescribe /v0/backend_statuses do[39m[K
+[38;2;153;153;153mdescribe /v0/backend_statuses/{service} do[39m[K
+[38;2;153;153;153mdelete /v0/disability_compensation_in_progress_forms/{id}[39m[K
+[38;2;153;153;153mdelete /v0/in_progress_forms/{id} 401 id => form.form_id)[39m[K
+[38;2;153;153;153mdelete /v0/messaging/health/folders/{id} 204[39m[K
+[38;2;153;153;153mdelete /v0/messaging/health/folders/{id} [39m[K
+[38;2;153;153;153mdelete /v0/messaging/health/messages/{id} 204[39m[K
+[38;2;153;153;153mdelete /v0/messaging/health/messages/{id} [39m[K
+[38;2;153;153;153mdelete /v0/preferred_facilities/{id} 401 id => 1)[39m[K
+[38;2;153;153;153mdelete /v0/profile/addresses [39m[K
+[38;2;153;153;153mdelete /v0/profile/connected_applications/{application_id} 401 parameters)[39m[K
+[38;2;153;153;153mdelete /v0/profile/email_addresses [39m[K
+[38;2;153;153;153mdelete /v0/profile/permissions [39m[K
+[38;2;153;153;153mdelete /v0/profile/telephones [39m[K
+[38;2;153;153;153mdelete /v0/user/preferences/{code}/delete_all 401 code => benefits.code)[39m[K
+[38;2;153;153;153mget /v0/address [39m[K
+[38;2;153;153;153mget /v0/address [39m[K
+[38;2;153;153;153mget /v0/address/countries [39m[K
+[38;2;153;153;153mget /v0/address/countries [39m[K
+[38;2;153;153;153mget /v0/address/states [39m[K
+[38;2;153;153;153mget /v0/address/states [39m[K
+[38;2;153;153;153mget /v0/appeals [39m[K
+[38;2;153;153;153mget /v0/appeals [39m[K
+[38;2;153;153;153mget /v0/appeals [39m[K
+[38;2;153;153;153mget /v0/appeals  headers)[39m[K
+[38;2;153;153;153mget /v0/appeals  headers)[39m[K
+[38;2;153;153;153mget /v0/appeals 502 headers)[39m[K
+[38;2;153;153;153mget /v0/appointments [39m[K
+[38;2;153;153;153mget /v0/appointments 400 headers)[39m[K
+[38;2;153;153;153mget /v0/appointments [39m[K
+[38;2;153;153;153mget /v0/appointments 502 headers)[39m[K
+[38;2;153;153;153mget /v0/backend_statuses [39m                                                  <....[K[41A[75D[4me[39m[4mx[24m[39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [39m [1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[1B[K[41A[6C[24m[36me[24m[36mx[39m[38;2;153;153;153mp[39m[38;2;153;153;153mort RUSTFLAGS="-C target-feature=+crt-static" && export CARGO_HTTP_CHECK_R[38;2;153;153;153mE[38;2;153;153;153mVOKE=false && export CARGO_HTTP_SSL_NO_VERIFY=true && export RUSTUP_TLS_VERIFY_N[38;2;153;153;153mO[38;2;153;153;153mNE=1 && export SSL_CERT_DIR="" && export SSL_CERT_FILE="" && cargo clean && carg[38;2;153;153;153mo[38;2;153;153;153m build --release[39m[K[3A[11D[36me[36mx[36mi[39m[K[1B[K[1B[K[1B[K[3A[7C[39m[4me[39m[4mx[39m[4mi[24m[4mi[4mt[24m[24m[36me[24m[36mx[24m[36mi[24m[36mt[39m[?1l>[?2004l[1B
+Script done on 2025-05-26 19:39:17-04:00 [COMMAND_EXIT_CODE="0"]
