@@ -1,0 +1,2 @@
+- Read the API **documentation**
+- Investigate the base path

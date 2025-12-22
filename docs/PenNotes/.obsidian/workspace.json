@@ -1,0 +1,175 @@
+{
+  "main": {
+    "id": "254f67d40b5d3686",
+    "type": "split",
+    "children": [
+      {
+        "id": "00f756b61607bce7",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "fec2bde8be0b8522",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "Lessons Learned/Maveris Labs/What did you do? Discovering a DoS vulnerability by accident (CVE*).md",
+                "mode": "source",
+                "source": false
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "97e1f7f34e00c289",
+    "type": "split",
+    "children": [
+      {
+        "id": "0333fea03d7495ed",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "be5415bb77f0b129",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical"
+              }
+            }
+          },
+          {
+            "id": "2c9359713d3891dc",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              }
+            }
+          },
+          {
+            "id": "4d88f996ae69c5c3",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "eceac75232b84798",
+    "type": "split",
+    "children": [
+      {
+        "id": "e464ad9d5892451b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "6dd34418b1195b0f",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "Lessons Learned/Maveris Labs/What did you do? Discovering a DoS vulnerability by accident (CVE*).md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              }
+            }
+          },
+          {
+            "id": "e29a1bb8c534bf9c",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "Lessons Learned/Maveris Labs/What did you do? Discovering a DoS vulnerability by accident (CVE*).md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              }
+            }
+          },
+          {
+            "id": "5740782101481aaf",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true
+              }
+            }
+          },
+          {
+            "id": "d797b96264b07dfb",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "Lessons Learned/Maveris Labs/What did you do? Discovering a DoS vulnerability by accident (CVE*).md"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false
+    }
+  },
+  "active": "fec2bde8be0b8522",
+  "lastOpenFiles": [
+    "AD_PrivEsc/AD_Mind_Map",
+    "AD_PrivEsc",
+    "Lessons Learned/Maveris Labs/Pasted image 20240915141739.png",
+    "Lessons Learned/Maveris Labs/What did you do? Discovering a DoS vulnerability by accident (CVE*).md",
+    "Lessons Learned/Maveris Labs/Pasted image 20240915141511.png",
+    "Lessons Learned/Maveris Labs/Crack Faster, Hack Smarter.md",
+    "Lessons Learned/Maveris Labs/Critical.md",
+    "AD/AD Enumeration Commands.md",
+    "Lessons Learned",
+    "AD/AD_Mind_Map/Link.md",
+    "AD/AD_Mind_Map 1",
+    "Lessons Learned/Maveris Labs",
+    "AD/cheatsheet-active-directory.md",
+    "AD/CheatSheet1.md",
+    "AD/CheatSheet2 - the sauce.md",
+    "AD/Checklist.md",
+    "AD/Constrained_Delegation_Enabled.md",
+    "AD/Spraying.md",
+    "AD/One-liners.md",
+    "AD/Kerberoasting.md",
+    "AD/LDAP.md",
+    "AD/AD_Mind_Map",
+    "AD"
+  ]
+}

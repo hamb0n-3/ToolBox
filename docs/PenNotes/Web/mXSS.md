@@ -1,0 +1,2 @@
+- [mXSS Expalined](https://sonarsource.github.io/mxss-cheatsheet/explained/)
+- [mXSS Payloads](https://sonarsource.github.io/mxss-cheatsheet/examples/)

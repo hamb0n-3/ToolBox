@@ -1,0 +1,12 @@
+#### HOSTNAMES
+sudo vim /etc/hosts
+10.163.03.163 trick.htb subdom.trick.htb
+
+#### DNS
+sudo nano /etc/resolv.conf
+nameserver IP_ADDRESS_OF_THE_DISCOVERED_NAMESEVER_FROM_OUR_NMAP_SCAN
+- ` make sure it's above anything else in there `
+sudo apt install resolvconf
+sudo service resolvconf restart
+nslookup mailman.com
+
