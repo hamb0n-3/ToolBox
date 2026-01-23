@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--verbose",
         action="store_true",
-        help="Enable verbose logging (also settable via VERBOSE=1 env var).",
+        help="Enable verbose logging.",
     )
     return parser.parse_args()
 
