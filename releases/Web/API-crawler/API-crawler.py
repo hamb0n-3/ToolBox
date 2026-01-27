@@ -91,9 +91,9 @@ def crawl(limit: int, resume: bool = False) -> None:
     if not API_TOKEN:
         raise SystemExit("Set API_TOKEN constant in the script.")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-session = requests.Session()
-session.verify = False
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    session = requests.Session()
+    session.verify = False
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     session.headers.update({"Authorization": f"Bearer {API_TOKEN}", "Accept": "application/json"})
     if resume:
