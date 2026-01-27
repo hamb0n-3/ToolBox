@@ -8,7 +8,7 @@ import requests
 
 BASE_API_URL = "https://example.com/api/"
 START_URI = "/api/"
-API_TOKEN = os.environ.get("API-CRAWLER_TOKEN", "")
+API_TOKEN = os.environ.get("API_CRAWLER_TOKEN", "")
 OUT_DIR = Path("API-crawler_output")
 MAX_PAGES = 200
 PER_SLEEP = 0.2
