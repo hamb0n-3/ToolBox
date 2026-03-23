@@ -74,7 +74,7 @@ wps() {
     --passwords /usr/share/wordlists/rockyou.txt --max-threads=50
 }  # [web wordpress wpscan]
 
-ferox_full(){ feroxbuster -u "$1" -x php,html,js,txt,bak,old,zip,tar,tar.gz,sql,json,xml,env,py,config,ssh -A -k -C 404 -s 200,204,301,302,307,401,403,405 -t 1 -r -d 5 --extract-links --timeout 10 --rate-limit 10 --thorough -o "feroxbuster_$(echo "$1" | sed 's|https\?://||; s|/|_|g').txt"; }
+ferox_full(){ feroxbuster -u "$1" -x php,html,js,txt,bak,old,zip,tar,tar.gz,sql,json,xml,env,py,config,ssh -A -k -s 200,204,301,302,307 -t 10 -r -d 5 --extract-links --timeout 10 --rate-limit 0.1 --thorough -o "feroxbuster_$(echo "$1" | sed 's|https\?://||; s|/|_|g').txt"; }
 
 ##################### TLS / mTLS #####################
 mtls_check_brief() {
@@ -258,7 +258,8 @@ hydra_httppostform() {
   echo "hydra -l user -P /usr/share/wordlists/rockyou.txt 192.168.50.201 http-post-form '/index.php:fm_usr=^USER^&fm_pwd=^PASS^:Login failed. Invalid'"
 }  # [hydra http form]
 
-
+jhaKnowPenTestUser@dev.jha
+jhaKnowPenTestUser
 ################### Tunneling / Pivoting ###################
 # Ligolo-ng quick helpers
 ligolo_start() { sudo ip tuntap add user "$(hostname)" mode tun ligolo; sudo ip link set ligolo up; ./proxy -selfcert; }  # [pivot ligolo]
