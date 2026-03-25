@@ -36,19 +36,18 @@ fi
 ########## Admin / Quality of Life ##########
 ll() { command ls --color -lah -- "$@"; }  # [files listing]
 comparelists() { grep -Fvx -f "$2" -- "$1"; }  # [files diff compare]
-store() { python3 "$KALI"/scripts/store.py "$@"; }  # [helpers]
-tjp() { [ -n "$ZSH_VERSION" ] && . "$HOME/.zshrc"; [ -f "$HOME/.kali" ] && . "$HOME/.kali" && . "$HOME/.env"; }  # [shell reload]
+tjp() { [ -n "$ZSH_VERSION" ] && . "$HOME/.zshrc"; [ -f "$TOOLBOX/.kali" ] && . "$TOOLBOX/.kali" && . "$HOME/.env"; }  # [shell reload]
 toolbox() { cd "$TOOLBOX" || return; }  # [nav repo]
 vt_scan() {python "$SRC"/Files/vt_scan/vt_scan.py --format md "$1"}
 source_venv() {source ~/.venv/bin/activate} # pip 
-CodeVault() {cd "$CODEVAULT" ; git add . ; git commit -m "$1" ; git push ; cd - } 
-ToolBox() {cd "$TOOLBOX" ; git add . ; git commit -m "$1" ; git push ; cd -}
+CodeVault() {eval $(ssh-agent) && ssh-add "$GITHUB_KEY" && cd "$CODEVAULT" ; git pull && git add . && git commit -m "$1" && git push && cd - && cd "$TOOLBOX" ; git add . ; git commit -m "$1" ; git push ; cd -}
 pybin() {python3 "$PYBIN" "$@"}
 
 # Quick editor opener (background)
 gedit() { command gedit "$@" & }  # [gui editor]
-alias o='gedit ~/.kali &'
-alias s='(){grep -i "$1" ~/.kali --color}'
+unalias o s 2>/dev/null; true
+o() { command gedit "$TOOLBOX/.kali" & }
+s() { grep -i "$1" "$TOOLBOX/.kali" --color; }
 
 ############## Scanning / Recon ##############
 # Nmap quick and full
@@ -258,8 +257,7 @@ hydra_httppostform() {
   echo "hydra -l user -P /usr/share/wordlists/rockyou.txt 192.168.50.201 http-post-form '/index.php:fm_usr=^USER^&fm_pwd=^PASS^:Login failed. Invalid'"
 }  # [hydra http form]
 
-jhaKnowPenTestUser@dev.jha
-jhaKnowPenTestUser
+
 ################### Tunneling / Pivoting ###################
 # Ligolo-ng quick helpers
 ligolo_start() { sudo ip tuntap add user "$(hostname)" mode tun ligolo; sudo ip link set ligolo up; ./proxy -selfcert; }  # [pivot ligolo]
@@ -287,7 +285,7 @@ pty() { echo "python3 -c 'import pty,os; pty.spawn(\"/bin/bash\")'"; }  # [shell
 
 
 ################### Tmux ###################
-t() { grep -i tmux "$HOME/.kali" --color; }  # [tmux grep]
+t() { grep -i tmux "$TOOLBOX/.kali" --color; }  # [tmux grep]
 nwindow() { TMUX= tmux new -n "$1"; }  # [tmux]
 nsession() { TMUX= tmux new -s "$1"; }  # [tmux]
 rwindow() { TMUX= tmux rename-window "$1"; }  # [tmux]
@@ -316,7 +314,7 @@ privescUSP() { echo "#powershell -nop -exec bypass -c \"(New-Object Net.WebClien
 
 
 ################### Project / Script Hooks ###################
-setrhost() { "$HOME/Tools/scripts/setrhost.py" "$1" && . "$HOME/.kali"; }  # [helpers rhost]
+setrhost() { "$HOME/Tools/scripts/setrhost.py" "$1" && . "$TOOLBOX/.kali"; }  # [helpers rhost]
 credspray() { "$HOME/Tools/scripts/CredSpray.py" "$@"; }  # [spray script]
 
 ################### Misc #########################
