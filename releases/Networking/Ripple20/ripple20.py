@@ -40,6 +40,7 @@ import ipaddress
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from dataclasses import dataclass, field
@@ -1102,8 +1103,8 @@ Examples:
         """,
     )
     target_group = parser.add_mutually_exclusive_group(required=True)
-    target_group.add_argument("--target", "-t", help="Target IP address")
-    target_group.add_argument("--target-file", "-f", help="File containing target IP addresses (one per line)")
+    target_group.add_argument("--target", "-t", help="Target IP address or hostname")
+    target_group.add_argument("--target-file", "-f", help="File containing targets — IP addresses or hostnames (one per line)")
     parser.add_argument("--port", "-p", type=int, default=80, help="TCP port for fingerprinting (default: 80)")
     parser.add_argument("--timeout", type=int, default=5, help="Packet timeout in seconds (default: 5)")
     parser.add_argument("--json", action="store_true", help="Output report in JSON format")
@@ -1127,12 +1128,23 @@ Examples:
 
 
 def validate_target(target: str) -> str:
-    """Validate that a target string is a valid IP address. Returns the normalized IP string."""
+    """Validate and resolve a target (IP address or hostname). Returns the resolved IP string."""
+    # Try as a raw IP first
     try:
         return str(ipaddress.ip_address(target))
     except ValueError:
-        print(f"ERROR: Invalid IP address: '{target}'", file=sys.stderr)
-        sys.exit(1)
+        pass
+    # Try DNS resolution for hostnames
+    try:
+        resolved = socket.getaddrinfo(target, None, socket.AF_INET, socket.SOCK_STREAM)
+        if resolved:
+            ip = resolved[0][4][0]
+            log.info(f"Resolved hostname '{target}' -> {ip}")
+            return ip
+    except socket.gaierror:
+        pass
+    print(f"ERROR: Cannot resolve target '{target}' — not a valid IP or hostname", file=sys.stderr)
+    sys.exit(1)
 
 
 def load_targets(target_file: str) -> list:
