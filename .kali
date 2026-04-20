@@ -40,7 +40,15 @@ tjp() { [ -n "$ZSH_VERSION" ] && . "$HOME/.zshrc"; [ -f "$TOOLBOX/.kali" ] && . 
 toolbox() { cd "$TOOLBOX" || return; }  # [nav repo]
 vt_scan() {python "$SRC"/Files/vt_scan/vt_scan.py --format md "$1"}
 source_venv() {source ~/.venv/bin/activate} # pip 
-CodeVault() {eval $(ssh-agent) && ssh-add "$GITHUB_KEY" && cd "$CODEVAULT" ; git pull && git add . && git commit -m "$1" && git push && cd - && cd "$TOOLBOX" ; git add . ; git commit -m "$1" ; git push ; cd -}
+CodeVault() {
+  eval "$(ssh-agent)" && ssh-add "$GITHUB_KEY" || return 1
+  cd "$CODEVAULT" || return 1
+  git pull && git add . && git commit -m "$1" && git push
+  cd - || return 1
+  cd "$TOOLBOX" || return 1
+  git add . && git commit -m "$1" && git push
+  cd -
+}
 pybin() {python3 "$PYBIN" "$@"}
 
 # Quick editor opener (background)
