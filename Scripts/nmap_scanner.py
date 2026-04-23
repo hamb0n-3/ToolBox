@@ -10,6 +10,8 @@ Usage:
     ./nmap_wrapper.py 10.0.0.0/24 --time 8h             # 8h then auto-pause
     ./nmap_wrapper.py 10.0.0.0/24 --start 14:46         # wait until 14:46
     ./nmap_wrapper.py --resume 12345                    # resume by old PID
+
+Only run this against hosts you are authorized to scan.
 """
 
 import argparse
@@ -26,8 +28,9 @@ from pathlib import Path
 
 # ==================== CONFIGURATION ====================
 
-OUTPUT_BASE = Path("./NMAP_scans")
+OUTPUT_BASE = Path("./scan_results")
 
+# Discovery scan: find open ports. -p- = all 65535 TCP ports.
 DISCOVERY_ARGS = [
     "-p-",
     "-T4",
@@ -42,8 +45,8 @@ SERVICE_ARGS = [
     "-sV",
     "-sC",
     "-Pn",
-    "-T4",
-    "--min-rate=1500"
+    "--min-rate", "1500",
+    "-T4"
 ]
 
 NMAP_BIN = "nmap"
@@ -91,10 +94,13 @@ def check_nmap():
 
 def run_nmap(cmd):
     """Run nmap in its own session so Ctrl-C at terminal does not kill it
-    directly — we control killing it ourselves from the interrupt handler."""
+    directly — we control killing it ourselves from the interrupt handler.
+    stdin is detached so nmap's interactive-key reader does not fight with
+    input() in the signal handler."""
     global _current_proc
     _current_proc = subprocess.Popen(
         cmd,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -103,20 +109,27 @@ def run_nmap(cmd):
     stdout, stderr = _current_proc.communicate()
     rc = _current_proc.returncode if _current_proc.returncode is not None else -1
     _current_proc = None
+    # Surface real nmap failures; suppress if we killed it ourselves (pause/kill).
+    if rc != 0 and not _pause_requested:
+        sys.stderr.write(f"[!] nmap exited {rc} for: {' '.join(cmd)}\n")
+        if stderr.strip():
+            sys.stderr.write(f"    {stderr.strip()}\n")
     return rc, stdout, stderr
 
 
 def kill_current_proc():
-    global _current_proc
-    if _current_proc is None or _current_proc.poll() is not None:
+    # Snapshot the global so a concurrent main-thread assignment to
+    # _current_proc = None cannot race us between check and use.
+    proc = _current_proc
+    if proc is None or proc.poll() is not None:
         return
     try:
-        os.killpg(os.getpgid(_current_proc.pid), signal.SIGTERM)
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
         for _ in range(15):
-            if _current_proc.poll() is not None:
+            if proc.poll() is not None:
                 return
             time.sleep(0.2)
-        os.killpg(os.getpgid(_current_proc.pid), signal.SIGKILL)
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except (ProcessLookupError, PermissionError):
         pass
 
@@ -126,7 +139,14 @@ def kill_current_proc():
 def expand_targets(targets):
     """Use `nmap -sL` to turn CIDRs/ranges into a flat list of IPs."""
     cmd = [NMAP_BIN, "-sL", "-n"] + list(targets)
-    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write("[!] target expansion failed (bad IP / CIDR / hostname?)\n")
+        if e.stderr:
+            for line in e.stderr.strip().splitlines():
+                sys.stderr.write(f"    {line}\n")
+        sys.exit(1)
     ips = []
     for line in result.stdout.splitlines():
         m = re.match(r"Nmap scan report for (\S+)", line)
@@ -325,9 +345,11 @@ def main():
             try:
                 with open(args.input_file) as f:
                     for line in f:
-                        line = line.split("#", 1)[0].strip()
-                        if line:
-                            raw_targets.append(line)
+                        # Strip comments, then split on whitespace — nmap's -iL
+                        # treats any whitespace (spaces/tabs/newlines) as separators.
+                        line = line.split("#", 1)[0]
+                        for tok in line.split():
+                            raw_targets.append(tok)
             except OSError as e:
                 sys.stderr.write(f"[!] cannot read {args.input_file}: {e}\n")
                 sys.exit(1)
