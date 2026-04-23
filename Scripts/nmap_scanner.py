@@ -21,14 +21,14 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 # ==================== CONFIGURATION ====================
-
-OUTPUT_BASE = Path("./scan_results")
+OUTPUT_BASE = Path("./NMAP_scans")
 
 # Discovery scan: find open ports. -p- = all 65535 TCP ports.
 DISCOVERY_ARGS = [
@@ -191,36 +191,54 @@ def update_open_ports(host, ports, output_dir):
 
 
 def service_scan_host(host, ports, output_dir):
-    """Service+script scan on the open ports. Writes per-host .nmap/.gnmap/.xml
-    and a [host].md copy, then appends to all_hosts.nmap / all_hosts.gnmap."""
+    """Service+script scan on the open ports. Writes nmap's -oA output into a
+    scratch tempdir (per-host files are not retained), then appends the
+    completed scan to:
+      - ServiceScans/all_hosts.{nmap,gnmap}
+      - OpenPorts/[PORT]/service_scans.{nmap,gnmap} for every port this host
+        had open
+    Aggregation happens only after nmap completes successfully; a paused or
+    failed scan leaves the combined files untouched so resume redoes the host
+    cleanly."""
     if not ports:
         return
     port_list = ",".join(str(p) for p in ports)
-    host_dir = output_dir / "ServiceScans" / "Hosts"
-    host_dir.mkdir(parents=True, exist_ok=True)
-    host_prefix = host_dir / host  # nmap -oA produces host.nmap/.gnmap/.xml
-    cmd = [NMAP_BIN] + SERVICE_ARGS + [
-        "-p", port_list,
-        "-oA", str(host_prefix),
-        host,
-    ]
-    run_nmap(cmd)
-    if _pause_requested:
-        # don't commit partial results to the combined logs; we'll retry this host
-        return
 
-    nmap_file = host_prefix.with_suffix(".nmap")
-    if nmap_file.exists():
-        (host_dir / f"{host}.md").write_text(nmap_file.read_text())
+    with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
+        # Use a plain string prefix and append the extension ourselves.
+        # Do NOT use Path.with_suffix — it treats IPs/hostnames as having
+        # an extension (e.g. Path("192.168.1.1").with_suffix(".nmap")
+        # becomes "192.168.1.nmap", which is not what nmap -oA produces).
+        prefix = str(Path(tmp) / "scan")
+        cmd = [NMAP_BIN] + SERVICE_ARGS + [
+            "-p", port_list,
+            "-oA", prefix,
+            host,
+        ]
+        run_nmap(cmd)
+        if _pause_requested:
+            return
 
-    svc_dir = output_dir / "ServiceScans"
-    for ext, name in [(".nmap", "all_hosts.nmap"), (".gnmap", "all_hosts.gnmap")]:
-        src = host_prefix.with_suffix(ext)
-        if not src.exists():
-            continue
-        with open(svc_dir / name, "a") as out, open(src) as inp:
-            out.write(inp.read())
-            out.write("\n")
+        svc_dir = output_dir / "ServiceScans"
+        svc_dir.mkdir(parents=True, exist_ok=True)
+
+        for ext in (".nmap", ".gnmap"):
+            src = Path(prefix + ext)
+            if not src.exists():
+                continue
+            content = src.read_text()
+            if not content.endswith("\n"):
+                content += "\n"
+
+            # Combined all-hosts file
+            with open(svc_dir / f"all_hosts{ext}", "a") as f:
+                f.write(content)
+
+            # Per-port file: every port the host had open gets a copy
+            for p in ports:
+                port_file = output_dir / "OpenPorts" / str(p) / f"service_scans{ext}"
+                with open(port_file, "a") as f:
+                    f.write(content)
 
 
 # --------------------- state (for pause/resume) ---------------------
