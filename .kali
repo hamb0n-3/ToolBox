@@ -43,13 +43,37 @@ source_venv() {source ~/.venv/bin/activate} # pip
 CodeVault() {
   eval "$(ssh-agent)" && ssh-add "$GITHUB_KEY" || return 1
   cd "$CODEVAULT" || return 1
-  git pull && git add . && git commit -m "$1" && git push
+  git pull && git add . && git commit -m "${1:-.}" ; git push
   cd - || return 1
   cd "$TOOLBOX" || return 1
-  git add . && git commit -m "$1" && git push
+  git add . && git commit -m "${1:-.}" ; git push
   cd -
 }
 pybin() {python3 "$PYBIN" "$@"}
+nen() {
+  local nodes
+  nodes=$(tailscale exit-node list 2>/dev/null \
+    | awk 'NR > 1 && /United States/ && !/offline/ { print $2 }')
+
+  if [[ -z "$nodes" ]]; then
+    echo "No online U.S. exit nodes found. Are you logged into Tailscale?"
+    return 1
+  fi
+  local node_count selected_node
+  node_count=$(echo "$nodes" | wc -l | tr -d ' ')
+  selected_node=$(echo "$nodes" | sed -n "$((RANDOM % node_count + 1))p")
+
+  echo "Switching to exit node: $selected_node"
+  sudo tailscale set --exit-node="$selected_node"
+
+  if [[ $? -ne 0 ]]; then
+    echo "Failed to switch exit node."
+    return 1
+  fi
+  local ip
+  ip=$(curl -s ipv4.icanhazip.com)
+  echo "Current public IPv4: $ip"
+}
 
 # Quick editor opener (background)
 gedit() { command gedit "$@" & }  # [gui editor]
