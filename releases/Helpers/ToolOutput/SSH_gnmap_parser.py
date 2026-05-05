@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Parse nmap .gnmap output and report hosts running OpenSSH < 9.8.
+Parse nmap .gnmap output and report hosts running OpenSSH < 10.3.
 Requires a version scan (-sV) to have been run.
 Usage: python parse_ssh_versions.py <file.gnmap>
 """
@@ -18,7 +18,7 @@ SSH_PORT_RE = re.compile(
 # Extracts the numeric version from e.g. "OpenSSH 8.9p1 Ubuntu 3ubuntu0.6"
 VERSION_RE = re.compile(r"OpenSSH\s+(\d+\.\d+)", re.IGNORECASE)
 
-TARGET = Version("9.8")
+TARGET = Version("10.3")
 
 
 def parse_gnmap(filepath):
@@ -51,7 +51,7 @@ def parse_gnmap(filepath):
     return vulnerable
 
 
-def write_output(results, out_dir="OpenSSH_9.8_RCE"):
+def write_output(results, out_dir="OpenSSH_10.3_RCE"):
     from pathlib import Path
 
     base = Path(out_dir)
@@ -59,7 +59,7 @@ def write_output(results, out_dir="OpenSSH_9.8_RCE"):
 
     # nmap.output — tabular view
     nmap_file = base / "nmap.output"
-    lines = [f"Hosts running OpenSSH < 9.8 ({len(results)} found)\n"]
+    lines = [f"Hosts running OpenSSH < 10.3 ({len(results)} found)\n"]
     lines.append(f"{'IP':<18} {'PORT':<8} BANNER")
     lines.append("-" * 60)
     for ip, port, banner in sorted(results):
@@ -88,7 +88,7 @@ def main():
     results = parse_gnmap(sys.argv[1])
 
     if not results:
-        print("No hosts found running OpenSSH < 9.8.")
+        print("No hosts found running OpenSSH < 10.3.")
         sys.exit(0)
 
     write_output(results)
