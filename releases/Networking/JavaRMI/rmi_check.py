@@ -29,24 +29,28 @@ DEFAULT_RMI_PORTS = "1090,1098,1099,5111,8901,8902,8903"
 
 NMAP_BASE_ARGS = [
     "-Pn",                              # Skip host discovery
-    "-n",                               # No DNS resolution
-    "-sV",                              # Service/version detection.
+    "-sV",                              # Service/version detection — required:
                                         # rmi-dumpregistry produces a fuller
                                         # dump when -sV has already
                                         # fingerprinted the service as Java
                                         # RMI; without it the script can fire
                                         # on the port alone and return
                                         # partial output (or nothing useful).
-    "--version-intensity", "5",         # Default; explicit for clarity.
     "--script", "rmi-dumpregistry",
-    "--script-timeout", "60s",
-    "--host-timeout", "300s",           # -sV adds fingerprinting overhead
-    "--min-rate=1500",
-    "-T4"
-                                        # ahead of the script.
+    # NOTE: deliberately NOT setting --script-timeout or --host-timeout.
+    # rmi-dumpregistry can legitimately take longer than 60s once -sV
+    # fingerprinting runs first, and any internal nmap timeout that fires
+    # mid-dump produces truncated output that looks like an "empty" registry.
+    # The SUBPROCESS_TIMEOUT below is the only ceiling we apply — it kills
+    # the whole nmap process if it really does hang, but it's high enough
+    # that a healthy scan completes well within it.
+    #
+    # NOTE: deliberately NOT setting --version-intensity. Nmap's default
+    # (7) gives the strongest fingerprint signal; lowering it caused -sV
+    # to miss RMI services that the default-intensity scan would catch.
 ]
-SUBPROCESS_TIMEOUT = 360  # Slightly above nmap's --host-timeout to give it
-                          # a chance to exit cleanly before we kill it.
+SUBPROCESS_TIMEOUT = 600  # 10 minutes per host. Generous — only fires if
+                          # nmap genuinely hangs.
 DEFAULT_REPORT_DIR = Path("./reports")
 
 
