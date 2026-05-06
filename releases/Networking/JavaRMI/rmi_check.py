@@ -37,8 +37,17 @@ NMAP_BASE_ARGS = [
                                         # on the port alone and return
                                         # partial output (or nothing useful).
     "--script", "rmi-dumpregistry",
-    "--min-rate=1500",
-    "-T4"
+    # NOTE: deliberately NOT setting --script-timeout or --host-timeout.
+    # rmi-dumpregistry can legitimately take longer than 60s once -sV
+    # fingerprinting runs first, and any internal nmap timeout that fires
+    # mid-dump produces truncated output that looks like an "empty" registry.
+    # The SUBPROCESS_TIMEOUT below is the only ceiling we apply — it kills
+    # the whole nmap process if it really does hang, but it's high enough
+    # that a healthy scan completes well within it.
+    #
+    # NOTE: deliberately NOT setting --version-intensity. Nmap's default
+    # (7) gives the strongest fingerprint signal; lowering it caused -sV
+    # to miss RMI services that the default-intensity scan would catch.
 ]
 SUBPROCESS_TIMEOUT = 600  # 10 minutes per host. Generous — only fires if
                           # nmap genuinely hangs.
@@ -513,16 +522,6 @@ def build_report(
         md.append(_description_for(r.verdict))
         md.append("")
 
-        if r.script_output:
-            md.append("#### Evidence")
-            md.append("")
-            md.append("Raw output from `rmi-dumpregistry`:")
-            md.append("")
-            md.append("```")
-            md.append(r.script_output)
-            md.append("```")
-            md.append("")
-
         if r.bound_objects:
             md.append("**Detected bound object indicators:**")
             md.append("")
@@ -732,9 +731,9 @@ def main() -> None:
     # invaluable when a verdict looks wrong. --debug is now redundant but
     # kept for backwards compatibility.
     stamp = started.strftime("%Y%m%d-%H%M%S")
-    raw_dir = DEFAULT_REPORT_DIR / f"raw-{stamp}"
+    raw_dir = DEFAULT_REPORT_DIR / f"evidence_data-{stamp}"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    print(f"[*] Raw nmap output saved under: {raw_dir}", file=sys.stderr)
+    print(f"[*] Evidence data saved under: {raw_dir}", file=sys.stderr)
 
     for t in targets:
         print(f"[*] {t} ...", file=sys.stderr, flush=True)
@@ -771,4 +770,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()s
+    main()
