@@ -30,24 +30,12 @@ DEFAULT_RMI_PORTS = "1090,1098,1099,5111,8901,8902,8903"
 NMAP_BASE_ARGS = [
     "-Pn",                              # Skip host discovery
     "-sV",                              # Service/version detection — required:
-                                        # rmi-dumpregistry produces a fuller
-                                        # dump when -sV has already
-                                        # fingerprinted the service as Java
-                                        # RMI; without it the script can fire
-                                        # on the port alone and return
-                                        # partial output (or nothing useful).
+    "--min-rate=1500",
+    "-T4",
+    "-vvv"
+    "--open"
     "--script", "rmi-dumpregistry",
-    # NOTE: deliberately NOT setting --script-timeout or --host-timeout.
-    # rmi-dumpregistry can legitimately take longer than 60s once -sV
-    # fingerprinting runs first, and any internal nmap timeout that fires
-    # mid-dump produces truncated output that looks like an "empty" registry.
-    # The SUBPROCESS_TIMEOUT below is the only ceiling we apply — it kills
-    # the whole nmap process if it really does hang, but it's high enough
-    # that a healthy scan completes well within it.
-    #
-    # NOTE: deliberately NOT setting --version-intensity. Nmap's default
-    # (7) gives the strongest fingerprint signal; lowering it caused -sV
-    # to miss RMI services that the default-intensity scan would catch.
+    
 ]
 SUBPROCESS_TIMEOUT = 600  # 10 minutes per host. Generous — only fires if
                           # nmap genuinely hangs.
