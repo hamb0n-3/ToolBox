@@ -19,12 +19,17 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Hardcoded settings
 # ---------------------------------------------------------------------------
-RMI_PORT = 5111
 NMAP_BINARY = "nmap"
-NMAP_ARGS = [
+
+# Default ports scanned. Includes the NSE script's native portrule set
+# (1090, 1098, 1099, 8901, 8902, 8903) plus 5111 which is commonly used
+# by Spring's RmiServiceExporter and other custom RMI deployments.
+# Override at runtime with -p / --ports.
+DEFAULT_RMI_PORTS = "1090,1098,1099,5111,8901,8902,8903"
+
+NMAP_BASE_ARGS = [
     "-Pn",                           # Skip host discovery
     "-n",                            # No DNS resolution
-    "-p", str(RMI_PORT),
     "--script", "rmi-dumpregistry",
     "--script-timeout", "60s",
     "--host-timeout", "180s",
@@ -32,6 +37,11 @@ NMAP_ARGS = [
 ]
 SUBPROCESS_TIMEOUT = 240
 DEFAULT_REPORT_DIR = Path("./reports")
+
+
+def build_nmap_args(ports: str) -> list[str]:
+    """Return the full nmap argv list for the given port spec."""
+    return ["-p", ports, *NMAP_BASE_ARGS]
 
 # Verdict -> (severity, short_label, cvss_estimate)
 VERDICT_META = {
@@ -62,6 +72,7 @@ ERROR_KEYWORDS = (
 class HostResult:
     target: str
     address: str = ""
+    port: str = ""
     port_state: str = "unknown"
     script_output: str = ""
     verdict: str = "NO_RMI"
@@ -87,33 +98,117 @@ class HostResult:
 # ---------------------------------------------------------------------------
 
 
-def run_nmap(target: str) -> str:
-    cmd = [NMAP_BINARY, *NMAP_ARGS, target]
+def run_nmap(target: str, ports: str) -> tuple[str, str]:
+    """
+    Run nmap and capture BOTH outputs:
+      - XML written to a tempfile (-oX <file>) for structured parsing
+      - Normal human-readable output to stdout (-oN -) as a fallback source
+
+    Returns (xml_text, normal_text). Either may be empty on failure.
+    Capturing both is a deliberate belt-and-braces measure: depending on
+    nmap version and the data the script returns, the rmi-dumpregistry
+    output sometimes lands fully in XML, sometimes only in the normal-mode
+    text. Reading both means we never lose data.
+    """
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as fh:
+        xml_path = fh.name
+
+    cmd = [
+        NMAP_BINARY,
+        "-p", ports,
+        "-Pn", "-n",
+        "--script", "rmi-dumpregistry",
+        "--script-timeout", "60s",
+        "--host-timeout", "180s",
+        "-oX", xml_path,   # XML to file
+        "-oN", "-",        # Normal text to stdout
+        target,
+    ]
     try:
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=SUBPROCESS_TIMEOUT,
-        )
-    except FileNotFoundError:
-        sys.exit(f"[!] '{NMAP_BINARY}' not found in PATH.")
-    except subprocess.TimeoutExpired:
-        return ""
-    return proc.stdout
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=SUBPROCESS_TIMEOUT,
+            )
+        except FileNotFoundError:
+            sys.exit(f"[!] '{NMAP_BINARY}' not found in PATH.")
+        except subprocess.TimeoutExpired:
+            return "", ""
+
+        normal_text = proc.stdout or ""
+        try:
+            xml_text = Path(xml_path).read_text()
+        except OSError:
+            xml_text = ""
+        return xml_text, normal_text
+    finally:
+        try:
+            Path(xml_path).unlink()
+        except OSError:
+            pass
+
+
+def extract_script_block_from_normal(normal_text: str, script_id: str = "rmi-dumpregistry") -> str:
+    """
+    Pull the lines belonging to a specific NSE script out of nmap's normal
+    (-oN) output. The format looks like:
+
+        | <script_id>: 
+        |   line one
+        |   line two
+        |_  last line
+
+    Returns the de-prefixed text content, or '' if the block isn't present.
+    """
+    lines = normal_text.splitlines()
+    collected: list[str] = []
+    in_block = False
+    header_re = re.compile(rf"^\|[_ ]?\s*{re.escape(script_id)}\s*:\s*(.*)$")
+
+    for raw in lines:
+        if not in_block:
+            m = header_re.match(raw)
+            if m:
+                in_block = True
+                trailing = m.group(1).strip()
+                if trailing:
+                    collected.append(trailing)
+            continue
+
+        # In-block: lines start with '|' or '|_' until the next non-pipe line
+        if raw.startswith("|"):
+            # strip leading '|', '_', and a single space if present
+            content = raw[1:]
+            if content.startswith("_"):
+                content = content[1:]
+            if content.startswith(" "):
+                content = content[1:]
+            collected.append(content.rstrip())
+            # '|_' marks the last line of the block
+            if raw.startswith("|_"):
+                break
+        else:
+            break
+
+    return "\n".join(collected).strip()
 
 
 def _extract_script_text(script_el: ET.Element) -> str:
     """
     Pull human-readable text out of a <script> element.
 
-    Strategy: ALWAYS combine the `output` attribute AND a walk of the
-    structured <elem>/<table> children. Nmap may populate the `output`
-    attribute with only the top-level bound-object header while the
-    nested data (notably `Custom data → Classpath → file:/...jar`) lives
-    only in the structured children. Reading just one source loses data;
-    we concatenate both and let the classifier dedupe via regex matching.
+    Strategy: combine THREE sources so we never lose data:
+      1. The `output` attribute (stdnse.format_output text).
+      2. A keyed walk of <elem>/<table> descendants.
+      3. A flat `itertext()` dump as a last-resort fallback for cases where
+         non-keyed structured data slips past the keyed walk.
+    Duplication across sources is harmless — the regex classifier doesn't
+    care if a `file:/` URL appears more than once.
     """
     parts: list[str] = []
 
@@ -141,46 +236,77 @@ def _extract_script_text(script_el: ET.Element) -> str:
     if structured:
         parts.append("\n".join(structured))
 
+    # Fallback: flat dump of every text node beneath the script element.
+    flat = " ".join(t.strip() for t in script_el.itertext() if t and t.strip())
+    if flat:
+        parts.append(flat)
+
     return "\n\n".join(parts).strip()
 
 
-def _find_rmi_script(root: ET.Element) -> ET.Element | None:
-    """Locate the rmi-dumpregistry script element anywhere in the tree."""
-    for script in root.iter("script"):
-        if script.get("id") == "rmi-dumpregistry":
-            return script
-    return None
-
-
-def parse_nmap_xml(xml_text: str, target: str) -> HostResult:
+def parse_nmap_xml(xml_text: str, target: str, normal_text: str = "") -> HostResult:
     result = HostResult(target=target)
-    if not xml_text.strip():
+    if not xml_text.strip() and not normal_text.strip():
         result.error = "nmap produced no output (timeout or failure)"
         return result
 
-    try:
-        root = ET.fromstring(xml_text)
-    except ET.ParseError as exc:
-        result.error = f"XML parse error: {exc}"
-        return result
+    if xml_text.strip():
+        try:
+            root = ET.fromstring(xml_text)
+        except ET.ParseError as exc:
+            result.error = f"XML parse error: {exc}"
+            root = None
+    else:
+        root = None
 
-    host = root.find("host")
-    if host is None:
-        return result
+    found_port_el: ET.Element | None = None
+    found_script: ET.Element | None = None
 
-    addr_el = host.find("address")
-    if addr_el is not None:
-        result.address = addr_el.get("addr", "")
+    if root is not None:
+        host = root.find("host")
+        if host is not None:
+            addr_el = host.find("address")
+            if addr_el is not None:
+                result.address = addr_el.get("addr", "")
 
-    port = host.find(f".//port[@portid='{RMI_PORT}']")
-    if port is not None:
-        state_el = port.find("state")
-        if state_el is not None:
-            result.port_state = state_el.get("state", "unknown")
+            for port_el in host.iter("port"):
+                script = port_el.find("script[@id='rmi-dumpregistry']")
+                if script is not None:
+                    found_port_el = port_el
+                    found_script = script
+                    break
 
-    script = _find_rmi_script(root)
-    if script is not None:
-        result.script_output = _extract_script_text(script)
+            if found_port_el is not None:
+                result.port = found_port_el.get("portid", "")
+                state_el = found_port_el.find("state")
+                if state_el is not None:
+                    result.port_state = state_el.get("state", "unknown")
+            else:
+                # Surface the first open port we scanned, if any
+                for port_el in host.iter("port"):
+                    state_el = port_el.find("state")
+                    if state_el is not None and state_el.get("state") == "open":
+                        result.port = port_el.get("portid", "")
+                        result.port_state = "open"
+                        break
+
+    if found_script is not None:
+        result.script_output = _extract_script_text(found_script)
+
+    # Fallback: if XML extraction found nothing useful, parse the normal-text
+    # block. Some nmap versions / script paths leave the structured XML empty
+    # but populate the normal-mode output fully.
+    if not result.script_output.strip() and normal_text.strip():
+        block = extract_script_block_from_normal(normal_text)
+        if block:
+            result.script_output = block
+            # Best-effort port + state recovery from the normal text
+            if not result.port:
+                m = re.search(r"^(\d+)/tcp\s+(open|closed|filtered)\s+",
+                              normal_text, re.MULTILINE)
+                if m:
+                    result.port = m.group(1)
+                    result.port_state = m.group(2)
 
     return result
 
@@ -262,7 +388,12 @@ def classify(result: HostResult) -> None:
 SEVERITY_ORDER = ["High", "Medium", "Low", "Informational"]
 
 
-def build_report(results: list[HostResult], started: dt.datetime, ended: dt.datetime) -> str:
+def build_report(
+    results: list[HostResult],
+    started: dt.datetime,
+    ended: dt.datetime,
+    ports_scanned: str,
+) -> str:
     md: list[str] = []
     md.append("# RMI Registry Exposure Assessment Report")
     md.append("")
@@ -270,7 +401,7 @@ def build_report(results: list[HostResult], started: dt.datetime, ended: dt.date
     md.append(f"**Scan Started:** {started.strftime('%Y-%m-%d %H:%M:%S UTC')}  ")
     md.append(f"**Scan Duration:** {(ended - started).total_seconds():.1f} seconds  ")
     md.append(f"**Targets Assessed:** {len(results)}  ")
-    md.append(f"**Service Tested:** Java RMI Registry (TCP/{RMI_PORT})  ")
+    md.append(f"**Service Tested:** Java RMI Registry (TCP ports scanned: `{ports_scanned}`)  ")
     md.append(f"**Tool:** nmap NSE `rmi-dumpregistry`")
     md.append("")
     md.append("---")
@@ -317,7 +448,7 @@ def build_report(results: list[HostResult], started: dt.datetime, ended: dt.date
     md.append("Each target was scanned with the following nmap invocation:")
     md.append("")
     md.append("```bash")
-    md.append(f"nmap {' '.join(NMAP_ARGS)} <target>")
+    md.append(f"nmap {' '.join(build_nmap_args(ports_scanned))} <target>")
     md.append("```")
     md.append("")
     md.append("Results were classified using the following rubric:")
@@ -364,7 +495,7 @@ def build_report(results: list[HostResult], started: dt.datetime, ended: dt.date
         md.append(f"### 3.{idx} {r.target}")
         md.append("")
         md.append(f"- **Resolved Address:** `{r.address or 'unresolved'}`")
-        md.append(f"- **Port:** `{RMI_PORT}/tcp` ({r.port_state})")
+        md.append(f"- **Port:** `{r.port or '?'}/tcp` ({r.port_state})")
         md.append(f"- **Verdict:** `{r.verdict}` — {r.label}")
         md.append(f"- **Severity:** {r.severity}")
         md.append(f"- **CVSS (estimate):** {r.cvss}")
@@ -416,7 +547,7 @@ def build_report(results: list[HostResult], started: dt.datetime, ended: dt.date
 
         md.append("#### Recommendation")
         md.append("")
-        md.append(_recommendation_for(r.verdict))
+        md.append(_recommendation_for(r.verdict, r.port))
         md.append("")
         md.append("---")
         md.append("")
@@ -510,11 +641,12 @@ def _impact_for(verdict: str) -> str:
     }[verdict]
 
 
-def _recommendation_for(verdict: str) -> str:
+def _recommendation_for(verdict: str, port: str = "") -> str:
     if verdict == "NO_RMI":
         return "No action required."
+    port_label = f"TCP/{port}" if port else "the RMI registry port"
     base = [
-        f"Restrict TCP/{RMI_PORT} (and dynamically-allocated RMI object ports) to "
+        f"Restrict {port_label} (and dynamically-allocated RMI object ports) to "
         "trusted management networks only via host- or network-level firewall rules.",
         "Set the JVM property `java.rmi.server.useCodebaseOnly=true` to prevent "
         "remote codebase loading.",
@@ -569,6 +701,9 @@ def main() -> None:
     parser.add_argument("targets", nargs="*", help="One or more IPs/hostnames")
     parser.add_argument("-iL", metavar="FILE",
                         help="Input file with targets (one per line), like nmap -iL")
+    parser.add_argument("-p", "--ports", default=DEFAULT_RMI_PORTS,
+                        help=f"Comma/range port spec passed to nmap -p "
+                             f"(default: {DEFAULT_RMI_PORTS})")
     parser.add_argument("-o", "--output", metavar="FILE",
                         help="Path to write the markdown report (default: ./reports/<timestamp>.md)")
     parser.add_argument("--stdout", action="store_true",
@@ -581,31 +716,37 @@ def main() -> None:
         sys.exit(f"[!] '{NMAP_BINARY}' not in PATH.")
 
     targets = load_targets(args)
-    print(f"[*] Scanning {len(targets)} target(s) on tcp/{RMI_PORT}", file=sys.stderr)
+    print(f"[*] Scanning {len(targets)} target(s) on tcp/{args.ports}", file=sys.stderr)
 
     started = dt.datetime.now(dt.timezone.utc)
     results: list[HostResult] = []
 
-    debug_dir: Path | None = None
-    if args.debug:
-        stamp = started.strftime("%Y%m%d-%H%M%S")
-        debug_dir = DEFAULT_REPORT_DIR / f"debug-{stamp}"
-        debug_dir.mkdir(parents=True, exist_ok=True)
-        print(f"[*] Debug XML will be saved under: {debug_dir}", file=sys.stderr)
+    # Always save raw nmap outputs alongside the report — they're tiny and
+    # invaluable when a verdict looks wrong. --debug is now redundant but
+    # kept for backwards compatibility.
+    stamp = started.strftime("%Y%m%d-%H%M%S")
+    raw_dir = DEFAULT_REPORT_DIR / f"raw-{stamp}"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[*] Raw nmap output saved under: {raw_dir}", file=sys.stderr)
 
     for t in targets:
         print(f"[*] {t} ...", file=sys.stderr, flush=True)
-        xml_out = run_nmap(t)
-        if debug_dir is not None:
-            safe = re.sub(r"[^A-Za-z0-9_.\-]", "_", t)
-            (debug_dir / f"{safe}.xml").write_text(xml_out)
-        result = parse_nmap_xml(xml_out, t)
+        xml_out, normal_out = run_nmap(t, args.ports)
+        safe = re.sub(r"[^A-Za-z0-9_.\-]", "_", t)
+        (raw_dir / f"{safe}.xml").write_text(xml_out)
+        (raw_dir / f"{safe}.nmap").write_text(normal_out)
+
+        result = parse_nmap_xml(xml_out, t, normal_out)
         classify(result)
         results.append(result)
-        print(f"    -> {result.verdict} ({result.severity})", file=sys.stderr)
+
+        port_str = f"tcp/{result.port}" if result.port else "n/a"
+        out_len = len(result.script_output)
+        print(f"    -> {result.verdict} ({result.severity}) on {port_str} "
+              f"[extracted {out_len} chars]", file=sys.stderr)
     ended = dt.datetime.now(dt.timezone.utc)
 
-    report = build_report(results, started, ended)
+    report = build_report(results, started, ended, args.ports)
 
     if args.output:
         out_path = Path(args.output)
