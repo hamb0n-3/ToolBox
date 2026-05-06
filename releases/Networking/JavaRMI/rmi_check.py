@@ -28,14 +28,25 @@ NMAP_BINARY = "nmap"
 DEFAULT_RMI_PORTS = "1090,1098,1099,5111,8901,8902,8903"
 
 NMAP_BASE_ARGS = [
-    "-Pn",                           # Skip host discovery
-    "-n",                            # No DNS resolution
+    "-Pn",                              # Skip host discovery
+    "-n",                               # No DNS resolution
+    "-sV",                              # Service/version detection.
+                                        # rmi-dumpregistry produces a fuller
+                                        # dump when -sV has already
+                                        # fingerprinted the service as Java
+                                        # RMI; without it the script can fire
+                                        # on the port alone and return
+                                        # partial output (or nothing useful).
+    "--version-intensity", "5",         # Default; explicit for clarity.
     "--script", "rmi-dumpregistry",
     "--script-timeout", "60s",
-    "--host-timeout", "180s",
-    "-oX", "-",                      # XML to stdout (reliable parsing)
+    "--host-timeout", "300s",           # -sV adds fingerprinting overhead
+    "--min-rate=1500",
+    "-T4"
+                                        # ahead of the script.
 ]
-SUBPROCESS_TIMEOUT = 240
+SUBPROCESS_TIMEOUT = 360  # Slightly above nmap's --host-timeout to give it
+                          # a chance to exit cleanly before we kill it.
 DEFAULT_REPORT_DIR = Path("./reports")
 
 
@@ -118,12 +129,9 @@ def run_nmap(target: str, ports: str) -> tuple[str, str]:
     cmd = [
         NMAP_BINARY,
         "-p", ports,
-        "-Pn", "-n",
-        "--script", "rmi-dumpregistry",
-        "--script-timeout", "60s",
-        "--host-timeout", "180s",
-        "-oX", xml_path,   # XML to file
-        "-oN", "-",        # Normal text to stdout
+        *NMAP_BASE_ARGS,
+        "-oX", xml_path,                # XML to file
+        "-oN", "-",                     # Normal text to stdout
         target,
     ]
     try:
