@@ -19,7 +19,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # Hardcoded settings
 # ---------------------------------------------------------------------------
-RMI_PORT = 1099
+RMI_PORT = 5111
 NMAP_BINARY = "nmap"
 NMAP_ARGS = [
     "-Pn",                           # Skip host discovery
@@ -104,6 +104,54 @@ def run_nmap(target: str) -> str:
     return proc.stdout
 
 
+def _extract_script_text(script_el: ET.Element) -> str:
+    """
+    Pull human-readable text out of a <script> element.
+
+    Strategy: ALWAYS combine the `output` attribute AND a walk of the
+    structured <elem>/<table> children. Nmap may populate the `output`
+    attribute with only the top-level bound-object header while the
+    nested data (notably `Custom data → Classpath → file:/...jar`) lives
+    only in the structured children. Reading just one source loses data;
+    we concatenate both and let the classifier dedupe via regex matching.
+    """
+    parts: list[str] = []
+
+    output_attr = (script_el.get("output") or "").strip()
+    if output_attr:
+        parts.append(output_attr)
+
+    structured: list[str] = []
+
+    def walk(el: ET.Element, depth: int) -> None:
+        for child in el:
+            indent = "  " * depth
+            if child.tag == "elem":
+                key = child.get("key", "")
+                text = (child.text or "").strip()
+                if text:
+                    structured.append(f"{indent}{key}: {text}" if key else f"{indent}{text}")
+            elif child.tag == "table":
+                key = child.get("key", "")
+                if key:
+                    structured.append(f"{indent}{key}")
+                walk(child, depth + 1)
+
+    walk(script_el, 0)
+    if structured:
+        parts.append("\n".join(structured))
+
+    return "\n\n".join(parts).strip()
+
+
+def _find_rmi_script(root: ET.Element) -> ET.Element | None:
+    """Locate the rmi-dumpregistry script element anywhere in the tree."""
+    for script in root.iter("script"):
+        if script.get("id") == "rmi-dumpregistry":
+            return script
+    return None
+
+
 def parse_nmap_xml(xml_text: str, target: str) -> HostResult:
     result = HostResult(target=target)
     if not xml_text.strip():
@@ -125,16 +173,14 @@ def parse_nmap_xml(xml_text: str, target: str) -> HostResult:
         result.address = addr_el.get("addr", "")
 
     port = host.find(f".//port[@portid='{RMI_PORT}']")
-    if port is None:
-        return result
+    if port is not None:
+        state_el = port.find("state")
+        if state_el is not None:
+            result.port_state = state_el.get("state", "unknown")
 
-    state_el = port.find("state")
-    if state_el is not None:
-        result.port_state = state_el.get("state", "unknown")
-
-    script = port.find("script[@id='rmi-dumpregistry']")
+    script = _find_rmi_script(root)
     if script is not None:
-        result.script_output = (script.get("output") or "").strip()
+        result.script_output = _extract_script_text(script)
 
     return result
 
@@ -145,9 +191,30 @@ def parse_nmap_xml(xml_text: str, target: str) -> HostResult:
 
 
 def classify(result: HostResult) -> None:
+    """
+    Classify rmi-dumpregistry output.
+
+    Verdict rule (in priority order):
+      1. No output, port not open  -> NO_RMI
+      2. No output, port open      -> EMPTY
+      3. Output contains an error  -> ERROR
+      4. Output contains .jar/file:/ markers (with or without stub classes)
+                                   -> CLASSPATH_ONLY
+         Rationale: when classpath data is present, the "real" finding is
+         path/library disclosure. Standard RMI scaffolding classes
+         (RemoteStub, RemoteObject, etc.) are expected and not separately
+         actionable, so we do not let their presence override the
+         classpath signal.
+      5. Output contains class refs / endpoints / RMI keywords (no jars)
+                                   -> BOUND_OBJECTS
+      6. Output exists but matches none of the above
+                                   -> BOUND_OBJECTS (conservative — registry
+                                      is exposed and returned data we can't
+                                      classify; surface it as a real finding)
+    """
     output = result.script_output
 
-    if not output:
+    if not output.strip():
         result.verdict = "EMPTY" if result.port_state == "open" else "NO_RMI"
         return
 
@@ -156,8 +223,6 @@ def classify(result: HostResult) -> None:
         result.error = output.splitlines()[0][:200]
         return
 
-    has_bound = False
-    has_jar = False
     bound_lines: list[str] = []
     jar_lines: list[str] = []
 
@@ -166,27 +231,27 @@ def classify(result: HostResult) -> None:
         if not line:
             continue
 
+        is_jar = bool(JAR_OR_FILE_RE.search(line)) or line.lower() == "classpath"
         is_class_ref = bool(CLASS_REF_RE.search(line))
         is_endpoint = bool(ENDPOINT_RE.search(line))
         is_keyword = any(kw in line for kw in BOUND_KEYWORDS)
-        is_jar = bool(JAR_OR_FILE_RE.search(line))
 
-        if (is_class_ref or is_endpoint or is_keyword) and not (is_jar and not is_class_ref):
-            has_bound = True
-            bound_lines.append(line)
-        elif is_jar:
-            has_jar = True
+        if is_jar:
             jar_lines.append(line)
+        elif is_class_ref or is_endpoint or is_keyword:
+            bound_lines.append(line)
 
     result.bound_objects = bound_lines
     result.classpath_entries = jar_lines
 
-    if has_bound:
-        result.verdict = "BOUND_OBJECTS"
-    elif has_jar:
+    if jar_lines:
         result.verdict = "CLASSPATH_ONLY"
+    elif bound_lines:
+        result.verdict = "BOUND_OBJECTS"
     else:
-        result.verdict = "EMPTY"
+        # Output exists but no recognised signal — treat conservatively:
+        # the registry IS exposing data, just not in a form we know.
+        result.verdict = "BOUND_OBJECTS"
 
 
 # ---------------------------------------------------------------------------
@@ -263,14 +328,21 @@ def build_report(results: list[HostResult], started: dt.datetime, ended: dt.date
         md.append(f"| `{v}` | {label} | {sev} | {cvss} |")
     md.append("")
     md.append(
-        "- **BOUND_OBJECTS** is identified by the presence of fully-qualified Java "
-        "class references (e.g. `javax.management.remote.rmi.RMIServerImpl_Stub`), "
+        "- **BOUND_OBJECTS** is identified when fully-qualified Java class "
+        "references (e.g. `javax.management.remote.rmi.RMIServerImpl_Stub`), "
         "remote endpoint annotations (`@host:port`), or RMI keywords "
-        "(`extends`, `implements`, `Stub`, `Remote`)."
+        "(`extends`, `implements`, `Stub`, `Remote`) appear in the output "
+        "**and no classpath/jar data is present**. Output that is exposed but "
+        "does not match a known pattern is also treated as `BOUND_OBJECTS` to "
+        "avoid silently dropping a real exposure."
     )
     md.append(
-        "- **CLASSPATH_ONLY** is identified when only `.jar` filenames or `file:/` "
-        "URLs appear in the registry output, with no class or endpoint references."
+        "- **CLASSPATH_ONLY** is identified when `.jar` filenames or `file:/` "
+        "URLs appear anywhere in the registry output, including under a stub "
+        "object's `Custom data → Classpath` section. Jar presence drives this "
+        "verdict regardless of any standard RMI scaffolding classes also shown "
+        "(e.g. `RemoteStub`, `RemoteObject`), because in that scenario the "
+        "actionable disclosure is the classpath itself, not the generic stub."
     )
     md.append(
         "- **EMPTY** indicates the registry port is reachable but no usable data "
@@ -376,11 +448,17 @@ def _description_for(verdict: str) -> str:
             "deserialization attacks against the underlying server."
         ),
         "CLASSPATH_ONLY": (
-            "The Java RMI registry on this host returned only classpath or file-path "
-            "references (`.jar` files or `file:/` URLs). No bound remote objects "
-            "were enumerated. While the immediate deserialization attack surface is "
-            "reduced, the host is still leaking internal file system paths and "
-            "library names that aid an attacker during reconnaissance."
+            "The Java RMI registry on this host returned classpath or file-path "
+            "references (`.jar` files or `file:/` URLs), typically nested under a "
+            "bound stub object's `Custom data → Classpath` section. The dominant "
+            "disclosure is path and library information; generic RMI scaffolding "
+            "classes (`RemoteStub`, `RemoteObject`, etc.) may also be present "
+            "alongside the classpath but do not by themselves constitute a "
+            "directly attackable remote object. The immediate deserialization "
+            "attack surface is reduced compared to a fully enumerated "
+            "application-specific remote object, but the host is still leaking "
+            "internal file system paths and library names that aid an attacker "
+            "during reconnaissance and gadget-chain selection."
         ),
         "EMPTY": (
             "The Java RMI registry port is reachable, but the registry either has "
@@ -495,6 +573,8 @@ def main() -> None:
                         help="Path to write the markdown report (default: ./reports/<timestamp>.md)")
     parser.add_argument("--stdout", action="store_true",
                         help="Also print the full markdown report to stdout")
+    parser.add_argument("--debug", action="store_true",
+                        help="Save raw nmap XML for each host alongside the report")
     args = parser.parse_args()
 
     if not shutil.which(NMAP_BINARY):
@@ -503,16 +583,27 @@ def main() -> None:
     targets = load_targets(args)
     print(f"[*] Scanning {len(targets)} target(s) on tcp/{RMI_PORT}", file=sys.stderr)
 
-    started = dt.datetime.utcnow()
+    started = dt.datetime.now(dt.timezone.utc)
     results: list[HostResult] = []
+
+    debug_dir: Path | None = None
+    if args.debug:
+        stamp = started.strftime("%Y%m%d-%H%M%S")
+        debug_dir = DEFAULT_REPORT_DIR / f"debug-{stamp}"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[*] Debug XML will be saved under: {debug_dir}", file=sys.stderr)
+
     for t in targets:
         print(f"[*] {t} ...", file=sys.stderr, flush=True)
         xml_out = run_nmap(t)
+        if debug_dir is not None:
+            safe = re.sub(r"[^A-Za-z0-9_.\-]", "_", t)
+            (debug_dir / f"{safe}.xml").write_text(xml_out)
         result = parse_nmap_xml(xml_out, t)
         classify(result)
         results.append(result)
         print(f"    -> {result.verdict} ({result.severity})", file=sys.stderr)
-    ended = dt.datetime.utcnow()
+    ended = dt.datetime.now(dt.timezone.utc)
 
     report = build_report(results, started, ended)
 
