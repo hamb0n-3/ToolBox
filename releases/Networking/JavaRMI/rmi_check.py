@@ -30,12 +30,15 @@ DEFAULT_RMI_PORTS = "1090,1098,1099,5111,8901,8902,8903"
 NMAP_BASE_ARGS = [
     "-Pn",                              # Skip host discovery
     "-sV",                              # Service/version detection — required:
-    "--min-rate=1500",
-    "-T4",
-    "-vvv"
-    "--open"
+                                        # rmi-dumpregistry produces a fuller
+                                        # dump when -sV has already
+                                        # fingerprinted the service as Java
+                                        # RMI; without it the script can fire
+                                        # on the port alone and return
+                                        # partial output (or nothing useful).
     "--script", "rmi-dumpregistry",
-    
+    "--min-rate=1500",
+    "-T4"
 ]
 SUBPROCESS_TIMEOUT = 600  # 10 minutes per host. Generous — only fires if
                           # nmap genuinely hangs.
@@ -103,35 +106,34 @@ class HostResult:
 
 def run_nmap(target: str, ports: str) -> tuple[str, str]:
     """
-    Run nmap and capture BOTH outputs:
-      - XML written to a tempfile (-oX <file>) for structured parsing
-      - Normal human-readable output to stdout (-oN -) as a fallback source
+    Run nmap and capture BOTH outputs by writing to temp files.
 
     Returns (xml_text, normal_text). Either may be empty on failure.
-    Capturing both is a deliberate belt-and-braces measure: depending on
-    nmap version and the data the script returns, the rmi-dumpregistry
-    output sometimes lands fully in XML, sometimes only in the normal-mode
-    text. Reading both means we never lose data.
-    """
-    import tempfile
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".xml", delete=False) as fh:
-        xml_path = fh.name
+    Both outputs are written to temp files (not piped through stdout).
+    Using '-oN -' (normal output to stdout) alongside '-oX <file>' caused
+    empty output on some nmap versions due to pipe-buffering interactions
+    when stdout is a subprocess pipe.
+    """
+    import tempfile, os
+
+    xml_fd, xml_path = tempfile.mkstemp(suffix=".xml")
+    nrm_fd, nrm_path = tempfile.mkstemp(suffix=".nmap")
+    os.close(xml_fd)
+    os.close(nrm_fd)
 
     cmd = [
         NMAP_BINARY,
         "-p", ports,
         *NMAP_BASE_ARGS,
-        "-oX", xml_path,                # XML to file
-        "-oN", "-",                     # Normal text to stdout
+        "-oX", xml_path,
+        "-oN", nrm_path,
         target,
     ]
     try:
         try:
-            proc = subprocess.run(
+            subprocess.run(
                 cmd,
-                capture_output=True,
-                text=True,
                 check=False,
                 timeout=SUBPROCESS_TIMEOUT,
             )
@@ -140,17 +142,22 @@ def run_nmap(target: str, ports: str) -> tuple[str, str]:
         except subprocess.TimeoutExpired:
             return "", ""
 
-        normal_text = proc.stdout or ""
         try:
-            xml_text = Path(xml_path).read_text()
+            xml_text = Path(xml_path).read_text(errors="replace")
         except OSError:
             xml_text = ""
+        try:
+            normal_text = Path(nrm_path).read_text(errors="replace")
+        except OSError:
+            normal_text = ""
+
         return xml_text, normal_text
     finally:
-        try:
-            Path(xml_path).unlink()
-        except OSError:
-            pass
+        for p in (xml_path, nrm_path):
+            try:
+                Path(p).unlink()
+            except OSError:
+                pass
 
 
 def extract_script_block_from_normal(normal_text: str, script_id: str = "rmi-dumpregistry") -> str:
@@ -764,4 +771,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main()s
