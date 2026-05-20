@@ -511,6 +511,7 @@ def build_report(
     started: dt.datetime,
     ended: dt.datetime,
     ports_scanned: str,
+    rmg_used: bool = False,
 ) -> str:
     md: list[str] = []
     md.append("# RMI Registry Exposure Assessment Report")
@@ -520,7 +521,10 @@ def build_report(
     md.append(f"**Scan Duration:** {(ended - started).total_seconds():.1f} seconds  ")
     md.append(f"**Targets Assessed:** {len(results)}  ")
     md.append(f"**Service Tested:** Java RMI Registry (TCP ports scanned: `{ports_scanned}`)  ")
-    md.append(f"**Tool:** nmap NSE `rmi-dumpregistry`")
+    tools = "nmap NSE `rmi-dumpregistry`"
+    if rmg_used:
+        tools += ", remote-method-guesser (`rmg`) via Docker"
+    md.append(f"**Tools:** {tools}")
     md.append("")
     md.append("---")
     md.append("")
@@ -600,6 +604,27 @@ def build_report(
     md.append("- **ERROR** indicates a handshake or protocol error during enumeration.")
     md.append("- **NO_RMI** indicates the port is closed or filtered.")
     md.append("")
+    if rmg_used:
+        md.append("### 2.1 rmg Validation")
+        md.append("")
+        md.append(
+            "Targets with open RMI ports were additionally probed with "
+            "[remote-method-guesser (rmg)](https://github.com/qtc-de/remote-method-guesser) "
+            "via Docker for deeper security validation:"
+        )
+        md.append("")
+        md.append("```bash")
+        md.append("docker run --rm <image> enum <target> <port> --no-color")
+        md.append("docker run --rm <image> guess <target> <port> --no-color")
+        md.append("```")
+        md.append("")
+        md.append(
+            "`rmg enum` enumerates bound names and performs security configuration "
+            "checks (JEP 290, codebase settings, localhost bypass, security manager, "
+            "string marshalling, DGC, activation system). `rmg guess` performs "
+            "non-destructive remote method signature discovery."
+        )
+        md.append("")
     md.append("---")
     md.append("")
 
@@ -648,6 +673,31 @@ def build_report(
             md.append(f"```\n{r.error}\n```")
             md.append("")
 
+        if r.rmg_enum_output or r.rmg_guess_output:
+            md.append("#### rmg Validation")
+            md.append("")
+            if r.rmg_security_checks:
+                md.append("**Security Configuration Checks:**")
+                md.append("")
+                md.append("| Check | Status |")
+                md.append("|-------|--------|")
+                for check_name, status in r.rmg_security_checks.items():
+                    md.append(f"| {check_name} | {status} |")
+                md.append("")
+            if r.rmg_guess_output.strip():
+                md.append("**Method Guessing Results:**")
+                md.append("")
+                md.append(f"```\n{r.rmg_guess_output.strip()}\n```")
+                md.append("")
+            if r.rmg_enum_output.strip():
+                md.append("<details>")
+                md.append("<summary>Raw rmg enum output</summary>")
+                md.append("")
+                md.append(f"```\n{r.rmg_enum_output.strip()}\n```")
+                md.append("")
+                md.append("</details>")
+                md.append("")
+
         md.append("#### Impact")
         md.append("")
         md.append(_impact_for(r.verdict))
@@ -672,6 +722,9 @@ def build_report(
               "<https://cwe.mitre.org/data/definitions/502.html>")
     md.append("- ysoserial, *Java deserialization payload generator*: "
               "<https://github.com/frohoff/ysoserial>")
+    if rmg_used:
+        md.append("- qtc-de, *remote-method-guesser (rmg)*: "
+                  "<https://github.com/qtc-de/remote-method-guesser>")
     md.append("")
 
     return "\n".join(md)
