@@ -1,0 +1,1 @@
+printf '! U1 getvar "device.host_status"\r\n' | nc -w 3 <ip> 9100
