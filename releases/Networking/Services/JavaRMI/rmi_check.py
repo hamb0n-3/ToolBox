@@ -395,12 +395,12 @@ def classify(result: HostResult) -> None:
     # rmg-based verdict upgrades (never downgrade)
     if result.rmg_enum_output:
         enum_lower = result.rmg_enum_output.lower()
-        # If nmap saw nothing but rmg found bound names, upgrade
+        # If nmap saw nothing but rmg found bound names, upgrade.
+        # rmg lines look like: "[+]   - plain-server2"
         if result.verdict == "EMPTY" and "bound names:" in enum_lower:
+            bound_re = re.compile(r"^\[\+\]\s+-\s+\S")
             for line in result.rmg_enum_output.splitlines():
-                stripped = line.strip()
-                if stripped.startswith("- ") and "-->" not in stripped:
-                    # rmg lists bound names as "- <name>"
+                if bound_re.match(line) and "-->" not in line:
                     result.verdict = "BOUND_OBJECTS"
                     break
         # If classpath-only but rmg guess found callable methods, upgrade
@@ -417,11 +417,11 @@ def classify(result: HostResult) -> None:
 def check_docker_available() -> bool:
     """Return True if Docker is usable."""
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["docker", "info"],
             capture_output=True, timeout=10, check=False,
         )
-        return True
+        return proc.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
@@ -450,7 +450,7 @@ def run_rmg(target: str, port: str, image: str, timeout: int) -> tuple[str, str]
     """
     def _docker_run(action: str, extra_args: list[str] | None = None) -> str:
         cmd = [
-            "docker", "run", "--rm",
+            "docker", "run", "--rm", "--network", "host",
             image, action, target, port, "--no-color",
         ]
         if extra_args:
