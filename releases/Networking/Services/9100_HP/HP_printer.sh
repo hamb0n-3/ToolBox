@@ -1,0 +1,1 @@
+printf '\x1B%%-12345X@PJL INFO ID\r\n\x1B%%-12345X\r\n' | nc -w 3 <ip> 9100
