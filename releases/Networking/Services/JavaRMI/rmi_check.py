@@ -20,6 +20,8 @@ from pathlib import Path
 # Hardcoded settings
 # ---------------------------------------------------------------------------
 NMAP_BINARY = "nmap"
+RMG_DOCKER_IMAGE = "ghcr.io/qtc-de/remote-method-guesser/rmg:v5.1.0"
+RMG_TIMEOUT = 120  # seconds per rmg action
 
 # Default ports scanned. Includes the NSE script's native portrule set
 # (1090, 1098, 1099, 8901, 8902, 8903) plus 5111 which is commonly used
@@ -86,6 +88,9 @@ class HostResult:
     bound_objects: list[str] = field(default_factory=list)
     classpath_entries: list[str] = field(default_factory=list)
     error: str = ""
+    rmg_enum_output: str = ""
+    rmg_guess_output: str = ""
+    rmg_security_checks: dict[str, str] = field(default_factory=dict)
 
     @property
     def severity(self) -> str:
