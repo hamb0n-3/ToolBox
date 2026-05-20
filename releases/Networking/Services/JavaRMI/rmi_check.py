@@ -392,6 +392,111 @@ def classify(result: HostResult) -> None:
         # the registry IS exposing data, just not in a form we know.
         result.verdict = "BOUND_OBJECTS"
 
+    # rmg-based verdict upgrades (never downgrade)
+    if result.rmg_enum_output:
+        enum_lower = result.rmg_enum_output.lower()
+        # If nmap saw nothing but rmg found bound names, upgrade
+        if result.verdict == "EMPTY" and "bound names:" in enum_lower:
+            for line in result.rmg_enum_output.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("- ") and "-->" not in stripped:
+                    # rmg lists bound names as "- <name>"
+                    result.verdict = "BOUND_OBJECTS"
+                    break
+        # If classpath-only but rmg guess found callable methods, upgrade
+        if result.verdict == "CLASSPATH_ONLY" and result.rmg_guess_output:
+            if "identified methods" in result.rmg_guess_output.lower():
+                result.verdict = "BOUND_OBJECTS"
+
+
+# ---------------------------------------------------------------------------
+# rmg (remote-method-guesser) Docker integration
+# ---------------------------------------------------------------------------
+
+
+def check_docker_available() -> bool:
+    """Return True if Docker is usable."""
+    try:
+        subprocess.run(
+            ["docker", "info"],
+            capture_output=True, timeout=10, check=False,
+        )
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def pull_rmg_image(image: str) -> bool:
+    """Pull the rmg Docker image. Returns True on success."""
+    print(f"[*] Pulling rmg image: {image}", file=sys.stderr)
+    try:
+        proc = subprocess.run(
+            ["docker", "pull", image],
+            capture_output=True, text=True, timeout=300, check=False,
+        )
+        if proc.returncode != 0:
+            print(f"[!] docker pull failed: {proc.stderr.strip()[:200]}", file=sys.stderr)
+            return False
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def run_rmg(target: str, port: str, image: str, timeout: int) -> tuple[str, str]:
+    """
+    Run rmg enum and guess against a single target:port.
+
+    Returns (enum_output, guess_output). Either may be empty on failure.
+    """
+    def _docker_run(action: str, extra_args: list[str] | None = None) -> str:
+        cmd = [
+            "docker", "run", "--rm",
+            image, action, target, port, "--no-color",
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True,
+                timeout=timeout, check=False,
+            )
+            return proc.stdout
+        except subprocess.TimeoutExpired:
+            print(f"    [!] rmg {action} timed out for {target}:{port}",
+                  file=sys.stderr)
+            return ""
+
+    enum_out = _docker_run("enum")
+    guess_out = _docker_run("guess")
+    return enum_out, guess_out
+
+
+def parse_rmg_enum(output: str) -> dict[str, str]:
+    """
+    Parse rmg enum output for security-check results.
+
+    Looks for lines like:
+        [+]   - String Marshalling       Current Default
+        [+]   - DGC                       Enabled
+        [+]   - JEP290                    Vulnerable
+    Returns e.g. {"String Marshalling": "Current Default", "JEP290": "Vulnerable"}
+    """
+    checks: dict[str, str] = {}
+    # rmg enum security lines follow the pattern:
+    #   [+] RMI server ... configuration:
+    #   [+]
+    #   [+]   - <Check Name>       <Status>
+    check_re = re.compile(
+        r"^\[[\+\-]\]\s{2,}-\s+(.+?)\s{2,}(\S.*)$"
+    )
+    for line in output.splitlines():
+        m = check_re.match(line)
+        if m:
+            name = m.group(1).strip()
+            status = m.group(2).strip()
+            checks[name] = status
+    return checks
+
 
 # ---------------------------------------------------------------------------
 # Markdown report generation
@@ -713,6 +818,12 @@ def main() -> None:
                         help="Also print the full markdown report to stdout")
     parser.add_argument("--debug", action="store_true",
                         help="Save raw nmap XML for each host alongside the report")
+    parser.add_argument("--rmg", action="store_true",
+                        help="Run rmg via Docker for additional RMI validation")
+    parser.add_argument("--rmg-image", default=RMG_DOCKER_IMAGE,
+                        help=f"Docker image for rmg (default: {RMG_DOCKER_IMAGE})")
+    parser.add_argument("--rmg-timeout", type=int, default=RMG_TIMEOUT, metavar="SEC",
+                        help=f"Timeout per rmg action in seconds (default: {RMG_TIMEOUT})")
     args = parser.parse_args()
 
     if not shutil.which(NMAP_BINARY):
@@ -747,9 +858,53 @@ def main() -> None:
         out_len = len(result.script_output)
         print(f"    -> {result.verdict} ({result.severity}) on {port_str} "
               f"[extracted {out_len} chars]", file=sys.stderr)
+
+    # --- rmg validation pass ---
+    rmg_used = False
+    if args.rmg:
+        if not check_docker_available():
+            print("[!] Docker not available — skipping rmg validation",
+                  file=sys.stderr)
+        elif not pull_rmg_image(args.rmg_image):
+            print("[!] Failed to pull rmg image — skipping rmg validation",
+                  file=sys.stderr)
+        else:
+            rmg_used = True
+            open_results = [r for r in results
+                            if r.port and r.port_state == "open"]
+            print(f"[*] Running rmg against {len(open_results)} open target(s)",
+                  file=sys.stderr)
+            for r in open_results:
+                print(f"[*] rmg {r.target}:{r.port} ...",
+                      file=sys.stderr, flush=True)
+                enum_out, guess_out = run_rmg(
+                    r.target, r.port, args.rmg_image, args.rmg_timeout,
+                )
+                r.rmg_enum_output = enum_out
+                r.rmg_guess_output = guess_out
+                r.rmg_security_checks = parse_rmg_enum(enum_out)
+
+                # Save evidence
+                safe = re.sub(r"[^A-Za-z0-9_.\-]", "_", r.target)
+                if enum_out:
+                    (raw_dir / f"{safe}.rmg-enum.txt").write_text(enum_out)
+                if guess_out:
+                    (raw_dir / f"{safe}.rmg-guess.txt").write_text(guess_out)
+
+                # Re-classify with rmg data
+                old_verdict = r.verdict
+                classify(r)
+                if r.verdict != old_verdict:
+                    print(f"    [+] Verdict upgraded: {old_verdict} -> {r.verdict}",
+                          file=sys.stderr)
+                checks_summary = ", ".join(
+                    f"{k}={v}" for k, v in r.rmg_security_checks.items()
+                ) or "no checks parsed"
+                print(f"    -> rmg checks: {checks_summary}", file=sys.stderr)
+
     ended = dt.datetime.now(dt.timezone.utc)
 
-    report = build_report(results, started, ended, args.ports)
+    report = build_report(results, started, ended, args.ports, rmg_used=rmg_used)
 
     if args.output:
         out_path = Path(args.output)
