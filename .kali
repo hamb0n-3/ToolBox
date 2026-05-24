@@ -51,25 +51,36 @@ CodeVault() {
 }
 pybin() {python3 "$PYBIN" "$@"}
 nen() {
-  local nodes
-  nodes=$(tailscale exit-node list 2>/dev/null \
-    | awk 'NR > 1 && /United States/ && !/offline/ { print $2 }')
-
-  if [[ -z "$nodes" ]]; then
-    echo "No online U.S. exit nodes found. Are you logged into Tailscale?"
+  local raw nodes
+  raw=$(tailscale exit-node list 2>&1)
+  if [[ $? -ne 0 ]]; then
+    echo "tailscale exit-node list failed:"
+    echo "$raw"
     return 1
   fi
+
+  nodes=$(echo "$raw" | awk -F'\t' 'NR > 1 && tolower($0) ~ /united states/ && tolower($0) !~ /offline/ { print $2 }')
+  # Fallback: try whitespace-delimited $2 if tab-delimited yielded nothing
+  if [[ -z "$nodes" ]]; then
+    nodes=$(echo "$raw" | awk 'NR > 1 && tolower($0) ~ /united states/ && tolower($0) !~ /offline/ { print $2 }')
+  fi
+
+  if [[ -z "$nodes" ]]; then
+    echo "No online U.S. exit nodes found. Raw output:"
+    echo "$raw"
+    return 1
+  fi
+
   local node_count selected_node
   node_count=$(echo "$nodes" | wc -l | tr -d ' ')
   selected_node=$(echo "$nodes" | sed -n "$((RANDOM % node_count + 1))p")
 
   echo "Switching to exit node: $selected_node"
-  sudo tailscale set --exit-node="$selected_node"
-
-  if [[ $? -ne 0 ]]; then
+  if ! sudo tailscale set --exit-node="$selected_node"; then
     echo "Failed to switch exit node."
     return 1
   fi
+
   local ip
   ip=$(curl -s ipv4.icanhazip.com)
   echo "Current public IPv4: $ip"
