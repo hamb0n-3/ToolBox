@@ -271,25 +271,34 @@ def body_lower(r):
 # PRE-FLIGHT
 # =============================================================================
 
-def preflight(session):
+def preflight(session, assume_yes=False):
     print(f"\n{C.BOLD}== Pre-flight =={C.END}")
-    if API_KEY.startswith("PUT-YOUR"):
-        sys.exit(f"{C.RED}ERROR: Set API_KEY in the configuration block.{C.END}")
+    if not API_KEY or API_KEY.startswith("PUT-YOUR"):
+        print(f"{C.YELLOW}NOTE: No API key set. Running unauthenticated; "
+              f"endpoints requiring auth will return 401/403.{C.END}")
 
     parsed = urlparse(BASE_URL)
     if "sandbox" not in parsed.netloc:
         print(f"{C.YELLOW}WARNING: BASE_URL does not contain 'sandbox'. "
               f"Confirm you are authorized to test this host.{C.END}")
-        ans = input("Type 'yes' to continue: ").strip().lower()
-        if ans != "yes":
-            sys.exit("Aborted.")
+        if assume_yes:
+            print(f"{C.DIM}--yes supplied; continuing without prompt.{C.END}")
+        else:
+            ans = input("Type 'yes' to continue: ").strip().lower()
+            if ans != "yes":
+                sys.exit("Aborted.")
 
     r, err = safe_send(session, "GET", url_for(EP_FACILITIES),
                        params={"per_page": 1, "page": 1})
     if err:
         sys.exit(f"{C.RED}Cannot reach API: {err}{C.END}")
     if r.status_code in (401, 403):
-        sys.exit(f"{C.RED}Auth failed ({r.status_code}). Check your API key.{C.END}")
+        if API_KEY:
+            sys.exit(f"{C.RED}Auth failed ({r.status_code}). "
+                     f"Check your API key.{C.END}")
+        print(f"{C.YELLOW}Baseline returned HTTP {r.status_code} "
+              f"(expected without an API key; auth-gated tests will be "
+              f"limited).{C.END}")
     if r.status_code >= 500:
         print(f"{C.YELLOW}WARNING: baseline request returned HTTP "
               f"{r.status_code}. The API may be unhealthy; results below may be "
@@ -449,15 +458,22 @@ def test_authentication(session):
          {API_KEY_HEADER: "invalid-key-000000000000"}, base_params, False),
         ("AUTH-05", "Whitespace API key",
          {API_KEY_HEADER: "   "}, base_params, False),
-        ("AUTH-06", "Key in wrong header (Authorization Bearer)",
-         {"Authorization": f"Bearer {API_KEY}"}, base_params, False),
         ("AUTH-07", "SQL metachar in API key",
          {API_KEY_HEADER: "' OR '1'='1"}, base_params, False),
     ]
+    if API_KEY:
+        cases.append(
+            ("AUTH-06", "Key in wrong header (Authorization Bearer)",
+             {"Authorization": f"Bearer {API_KEY}"}, base_params, False))
     for tid, name, hdrs, params, allow in cases:
         r, err = safe_send(session, "GET", url, headers=hdrs, params=params,
                            allow_auth=allow)
         expect_status(tid, name, r, err, allowed=(401, 403), owasp="API2")
+
+    if not API_KEY:
+        record("AUTH-04", "API key accepted in URL query", INFO,
+               "Skipped: no API key configured.", owasp="API2")
+        return
 
     # AUTH-04: key in URL query string. PASS = rejected (key shouldn't leak to
     # logs); WARN = honored.
@@ -1116,7 +1132,87 @@ def summarize_and_save():
 # MAIN
 # =============================================================================
 
-def main():
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        description="VA Lighthouse Facilities API - Security Test Suite v2",
+        epilog="All flags override the matching constants in the "
+               "CONFIGURATION block at the top of this file.")
+    p.add_argument("--base-url", default=None,
+                   help=f"target base URL (default: {BASE_URL})")
+    p.add_argument("--api-key", default=None,
+                   help="API key (optional; auth-gated tests are skipped "
+                        "if omitted)")
+    p.add_argument("--api-key-header", default=None,
+                   help=f"header name for the API key (default: "
+                        f"{API_KEY_HEADER})")
+    p.add_argument("--facility-id", default=None,
+                   help="known-valid facility ID (default: auto-discover)")
+    p.add_argument("--timeout", type=int, default=None,
+                   help=f"per-request timeout in seconds (default: {TIMEOUT})")
+    p.add_argument("--no-verify-tls", action="store_true",
+                   help="disable TLS certificate verification "
+                        "(proxy debugging only)")
+    p.add_argument("--proxy", default=None,
+                   help="HTTPS proxy URL, e.g. http://127.0.0.1:8080")
+    p.add_argument("--rate-limit-requests", type=int, default=None,
+                   help=f"rapid requests to fire in the rate-limit burst "
+                        f"(default: {RATE_LIMIT_REQUESTS})")
+    p.add_argument("--rate-limit-threads", type=int, default=None,
+                   help=f"concurrency for the rate-limit burst "
+                        f"(default: {RATE_LIMIT_THREADS})")
+    p.add_argument("--rate-limit-delay", type=float, default=None,
+                   help=f"seconds between dispatches "
+                        f"(default: {RATE_LIMIT_DELAY})")
+    p.add_argument("--output-json", default=None,
+                   help=f"JSON report path (default: {OUTPUT_JSON})")
+    p.add_argument("--output-markdown", default=None,
+                   help=f"Markdown report path (default: {OUTPUT_MARKDOWN})")
+    p.add_argument("-q", "--quiet", action="store_true",
+                   help="suppress per-test output")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="skip the non-sandbox confirmation prompt")
+    return p.parse_args(argv)
+
+
+def apply_args(args):
+    """Override module-level configuration constants from parsed CLI args."""
+    global BASE_URL, API_KEY, API_KEY_HEADER, KNOWN_FACILITY_ID
+    global TIMEOUT, VERIFY_TLS, PROXIES
+    global RATE_LIMIT_REQUESTS, RATE_LIMIT_THREADS, RATE_LIMIT_DELAY
+    global OUTPUT_JSON, OUTPUT_MARKDOWN, VERBOSE
+
+    if args.base_url is not None:
+        BASE_URL = args.base_url
+    if args.api_key is not None:
+        API_KEY = args.api_key
+    if args.api_key_header is not None:
+        API_KEY_HEADER = args.api_key_header
+    if args.facility_id is not None:
+        KNOWN_FACILITY_ID = args.facility_id
+    if args.timeout is not None:
+        TIMEOUT = args.timeout
+    if args.no_verify_tls:
+        VERIFY_TLS = False
+    if args.proxy is not None:
+        PROXIES = {"https": args.proxy, "http": args.proxy}
+    if args.rate_limit_requests is not None:
+        RATE_LIMIT_REQUESTS = args.rate_limit_requests
+    if args.rate_limit_threads is not None:
+        RATE_LIMIT_THREADS = args.rate_limit_threads
+    if args.rate_limit_delay is not None:
+        RATE_LIMIT_DELAY = args.rate_limit_delay
+    if args.output_json is not None:
+        OUTPUT_JSON = args.output_json
+    if args.output_markdown is not None:
+        OUTPUT_MARKDOWN = args.output_markdown
+    if args.quiet:
+        VERBOSE = False
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    apply_args(args)
+
     print(f"""
 {C.BOLD}VA Lighthouse Facilities API - Security Test Suite v2{C.END}
 {C.DIM}Target : {BASE_URL}
@@ -1125,7 +1221,7 @@ Mode   : Non-destructive (OWASP API Top 10 2023){C.END}
 """)
 
     session = make_session()
-    preflight(session)
+    preflight(session, assume_yes=args.yes)
     facility_id = discover_facility_id(session)
 
     # Each group is isolated: a crash in one still lets the rest run + report.
