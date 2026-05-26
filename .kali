@@ -50,6 +50,7 @@ CodeVault() {
   cd -
 }
 pybin() {python3 "$PYBIN" "$@"}
+pybin_and_scan() { python3 "$CODEVAULT/Filesystem/pybin_and_scan.py" "$@"; }  # [vt pybin build scan]
 nen() {
   local raw nodes
   raw=$(tailscale exit-node list 2>&1)
