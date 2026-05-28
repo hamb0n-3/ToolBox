@@ -118,7 +118,7 @@ wps() {
 }  # [web wordpress wpscan]
 
 ferox_full(){ feroxbuster -u "$1" -x php,html,js,txt,bak,old,zip,tar,tar.gz,sql,json,xml,env,py,config,ssh -A -k -s 200,204,301,302,307 -t 10 -r -d 5 --extract-links --timeout 10 --thorough -o "feroxbuster_$(echo "$1" | sed 's|https\?://||; s|/|_|g').txt"; }
-
+sqlmap_full(){ sqlmap -u "$1" --level 3 --random-agent --output-dir="./sqlmap_scan/"}
 ##################### TLS / mTLS #####################
 mtls_check_brief() {
   local target="${1:-${TARGET:-$RHOST}}" port="${2:-443}"
