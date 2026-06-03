@@ -25,3 +25,8 @@ curl -s -i -X OPTIONS -H "apikey: $API_KEY" "$BASE_URL/facilities" \
   | grep -i "^allow:"
 ```
 Observed: `Allow: [VALUES]` — review whether all advertised methods are intentional and appropriately access-controlled.
+
+## Remediation Steps
+- Audit the `Allow` header returned by `OPTIONS` and remove any method not intentionally supported on that route.
+- Generate the `Allow` header automatically from the router configuration rather than hardcoding it, so it stays accurate as routes change.
+- Treat the `Allow` header as a formal API contract: only advertise methods that are implemented, access-controlled, and tested.

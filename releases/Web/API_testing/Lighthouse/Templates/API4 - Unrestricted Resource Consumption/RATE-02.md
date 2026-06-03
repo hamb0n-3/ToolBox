@@ -25,3 +25,8 @@ curl -s -D - -o /dev/null -H "apikey: $API_KEY" "$BASE_URL/facilities?per_page=1
   | grep -iE "x-ratelimit|ratelimit-|retry-after"
 ```
 Observed: no rate-limit headers present in the response.
+
+## Remediation Steps
+- Include `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` (or the IETF-standard `RateLimit-*` headers) in all API responses, not only on `429` responses.
+- Return a `Retry-After` header on `429` responses to allow clients to back off gracefully.
+- Exposing these headers is a prerequisite for well-behaved clients to self-throttle and reduces the likelihood of accidental rate-limit violations.

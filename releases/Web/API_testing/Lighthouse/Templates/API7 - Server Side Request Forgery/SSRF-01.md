@@ -31,3 +31,9 @@ curl -s -G -H "apikey: $API_KEY" "$BASE_URL/nearby" \
   --data-urlencode "city=x" --data-urlencode "state=VA" --data-urlencode "zip=00000"
 ```
 Observed: `[METADATA CONTENT / INTERNAL RESPONSE]` returned in the response body.
+
+## Remediation Steps
+- Validate all user-supplied URLs or address inputs against an explicit allow-list of permitted schemes, hostnames, and IP ranges before the server makes any outbound request.
+- Block all requests to link-local addresses (`169.254.0.0/16`), loopback (`127.0.0.0/8`), private RFC-1918 ranges, and cloud metadata endpoints at the application level.
+- Enforce egress filtering at the network layer (firewall/security group rules) so the application server cannot reach internal services even if application-level validation is bypassed.
+- Use IMDSv2 (requiring a session token) on AWS to mitigate metadata SSRF even if a request reaches the endpoint.

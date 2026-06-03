@@ -28,3 +28,8 @@ for n in 1000 10000 99999; do
 done
 ```
 Observed: `200` with `[COUNT]` records returned for `per_page=[VALUE]` — server should cap or reject this value.
+
+## Remediation Steps
+- Enforce a server-side maximum page size (e.g. 100 records). Silently cap values above the maximum rather than returning an error, or return `400` with a clear message if you prefer strict enforcement.
+- Never pass the raw `per_page` value directly to a database `LIMIT` clause; always apply `min(requested, MAX_PAGE_SIZE)` before query execution.
+- Document the maximum page size in the API specification so consumers can rely on it.

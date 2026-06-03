@@ -25,3 +25,8 @@ curl -s -D - -o /dev/null -X TRACE \
   -H "apikey: $API_KEY" "$BASE_URL/facilities"
 ```
 Observed: `[STATUS]` — expected `405`, `501`, or `403`. A `200` with the request echoed in the body confirms the finding.
+
+## Remediation Steps
+- Disable the `TRACE` method at the web server configuration level (e.g. `TraceEnable Off` in Apache, `if ($request_method = TRACE) { return 405; }` in nginx).
+- Verify the change at the load balancer and CDN layer as well; intermediate infrastructure can re-enable `TRACE` independently of the origin server.
+- Add a regression test that asserts `TRACE` requests return `405` or `501`.

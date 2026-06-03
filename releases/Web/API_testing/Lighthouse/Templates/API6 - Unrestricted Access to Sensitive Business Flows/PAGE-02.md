@@ -29,3 +29,8 @@ for p in "page=0" "page=-1" "page=abc" "per_page=-5" \
 done
 ```
 Observed: `5xx` for `[PARAM]=[VALUE]` — expected `400` or `422`.
+
+## Remediation Steps
+- Validate `page` and `per_page` at the input boundary before use: assert they are positive integers within an acceptable range. Return `400 Bad Request` or `422 Unprocessable Entity` with a descriptive message for invalid values.
+- Avoid passing raw parameter values into integer parsing without catching exceptions — validate first, convert second.
+- Add a custom error handler that returns a structured JSON error body rather than a raw framework exception for all unhandled errors.

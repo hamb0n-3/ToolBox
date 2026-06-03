@@ -29,3 +29,8 @@ for m in POST PUT DELETE PATCH; do
 done
 ```
 Observed: `[METHOD]` returned `[STATUS]` — expected `401`, `403`, `404`, or `405`.
+
+## Remediation Steps
+- Configure the router to explicitly declare the permitted method(s) for each route. Requests using any other method should be handled by the framework with `405 Method Not Allowed` and an `Allow` header listing only the accepted methods.
+- Do not rely on the absence of a handler to produce a `405`; some frameworks fall through to `404` or `200` instead.
+- Add tests asserting that `POST`, `PUT`, `DELETE`, and `PATCH` each return `405` on read-only endpoints.

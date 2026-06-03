@@ -25,3 +25,8 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -X FOOBAR -H "apikey: $API_KEY" "$BASE_URL/facilities"
 ```
 Observed: `[STATUS]` — expected `400`, `405`, or `501`.
+
+## Remediation Steps
+- Configure the HTTP server or API gateway with an explicit method allow-list (e.g. `GET`, `POST`, `OPTIONS`, `HEAD`). Reject any request using a method not on the list with `405 Method Not Allowed`.
+- Avoid permissive fallback routing that passes unrecognised methods to the application layer.
+- Add a test that submits a fabricated method (e.g. `FOOBAR`) and asserts a `405` response.

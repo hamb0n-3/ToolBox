@@ -27,3 +27,8 @@ curl -s -H "apikey: $API_KEY" "$BASE_URL/facilities/$FID" \
   | jq 'paths(scalars) | join(".")'
 ```
 Observed: response contains `[FIELD NAME]` which is not documented in the public API schema.
+
+## Remediation Steps
+- Define an explicit response schema (e.g. via an OpenAPI serializer or a dedicated DTO/view layer) and use it to whitelist only the fields intended for the consumer. Never serialize ORM models directly.
+- Audit every response object against the public API specification and remove any field not documented there.
+- Apply the change at the serialization layer so that new internal properties added in future are excluded by default rather than exposed by accident.
