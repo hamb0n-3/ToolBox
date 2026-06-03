@@ -85,6 +85,46 @@ def parse_start_time(s):
     return target
 
 
+# --------------------- target normalization ---------------------
+
+# Full dotted range on both sides, e.g. 10.0.0.1-10.0.0.50. This is NOT valid
+# nmap syntax (nmap only does per-octet ranges like 10.0.0.1-50), so we expand
+# it ourselves below.
+_IP_RANGE_RE = re.compile(r"(\d+\.\d+\.\d+\.\d+)-(\d+\.\d+\.\d+\.\d+)")
+
+
+def split_target_tokens(text):
+    """Split a string into target tokens on whitespace and commas, so
+    'a-b, c-d' (commas, with or without spaces) yields ['a-b', 'c-d']."""
+    return [t for t in re.split(r"[\s,]+", text) if t]
+
+
+def normalize_targets(raw_targets):
+    """Expand full IP-IP ranges (e.g. 10.0.0.1-10.0.0.50) into CIDR blocks that
+    nmap understands. Everything else — single IPs, CIDRs, hostnames, and
+    nmap's own octet-ranges like 10.0.0.1-50 — passes through unchanged."""
+    out = []
+    for tok in raw_targets:
+        m = _IP_RANGE_RE.fullmatch(tok)
+        if not m:
+            out.append(tok)
+            continue
+        try:
+            start = ipaddress.IPv4Address(m.group(1))
+            end = ipaddress.IPv4Address(m.group(2))
+        except ipaddress.AddressValueError:
+            # Octet > 255 etc. — let nmap's expansion report the error.
+            out.append(tok)
+            continue
+        if end < start:
+            sys.stderr.write(f"[!] range start is after end: {tok}\n")
+            sys.exit(2)
+        # summarize_address_range gives the minimal set of CIDR blocks covering
+        # the inclusive range, which nmap -sL then expands to individual hosts.
+        out.extend(str(net) for net in ipaddress.summarize_address_range(start, end))
+    return out
+
+
 # --------------------- nmap process management ---------------------
 
 def check_nmap():
@@ -326,7 +366,9 @@ def main():
         description="nmap wrapper: per-host logs, pause/resume, scheduled start, time limit.",
     )
     ap.add_argument("targets", nargs="*",
-                    help="IP(s), hostname(s), CIDR(s), or range(s) to scan")
+                    help="IP(s), hostname(s), CIDR(s), or range(s) to scan; "
+                         "ranges may be nmap octet form (10.0.0.1-50), full "
+                         "IP-IP (10.0.0.1-10.0.0.50), and comma-separated")
     ap.add_argument("-iL", dest="input_file", metavar="FILE",
                     help="read targets from a file (one per line, # comments ok)")
     ap.add_argument("--resume", metavar="PID", type=int,
@@ -361,21 +403,26 @@ def main():
         print(f"[*] Resumed from PID {args.resume}. "
               f"{len(state.completed)}/{len(state.targets)} hosts already done.")
     else:
-        raw_targets = list(args.targets)
+        raw_targets = []
+        for arg in args.targets:
+            raw_targets.extend(split_target_tokens(arg))
         if args.input_file:
             try:
                 with open(args.input_file) as f:
                     for line in f:
-                        # Strip comments, then split on whitespace — nmap's -iL
-                        # treats any whitespace (spaces/tabs/newlines) as separators.
+                        # Strip comments, then split on whitespace and commas so
+                        # both nmap-style whitespace separation and comma-separated
+                        # ranges work.
                         line = line.split("#", 1)[0]
-                        for tok in line.split():
-                            raw_targets.append(tok)
+                        raw_targets.extend(split_target_tokens(line))
             except OSError as e:
                 sys.stderr.write(f"[!] cannot read {args.input_file}: {e}\n")
                 sys.exit(1)
         if not raw_targets:
             ap.error("no targets given (pass IPs/hostnames as args, use -iL FILE, or --resume PID)")
+
+        # Turn full IP-IP ranges into CIDRs before handing to nmap -sL.
+        raw_targets = normalize_targets(raw_targets)
 
         state = ScanState()
         print(f"[*] Expanding {len(raw_targets)} target spec(s)...")
