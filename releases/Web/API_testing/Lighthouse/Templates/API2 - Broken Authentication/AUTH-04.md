@@ -25,3 +25,8 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   "$BASE_URL/facilities?apikey=$API_KEY&per_page=1"
 ```
 Observed: `200` — a key supplied in the URL query string should not be honored.
+
+## Remediation Steps
+- Accept the API key only via the documented request header. Explicitly reject requests where the key is found in query parameters, request body, or any other location.
+- Return `401` if the credential is absent from the expected header, even if the same value appears elsewhere in the request.
+- If backward compatibility temporarily requires query-parameter support, log a deprecation warning and set a firm sunset date.

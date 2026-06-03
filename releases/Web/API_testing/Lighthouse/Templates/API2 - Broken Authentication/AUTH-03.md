@@ -25,3 +25,9 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -H "apikey: invalid-key-000000000000" "$BASE_URL/facilities?per_page=1"
 ```
 Observed: `200` — expected `401` or `403`.
+
+## Remediation Steps
+- Validate the API key against the issued key store on every request. Never treat the presence of the header alone as proof of authentication.
+- Use constant-time comparison when checking keys to prevent timing-based enumeration.
+- Return `401` for any key not found in the store; log the attempt with the source IP for monitoring.
+- Consider key rotation policies and short-lived tokens to limit the window of exposure for any compromised key.

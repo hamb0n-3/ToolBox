@@ -24,3 +24,8 @@ Any client aware of the expected header name can bypass authentication by submit
 curl -s -o /dev/null -w "%{http_code}\n" -H "apikey: " "$BASE_URL/facilities?per_page=1"
 ```
 Observed: `200` — expected `401` or `403`.
+
+## Remediation Steps
+- Reject any API key value that is empty, null, or blank before performing a credential lookup. Return `401` immediately.
+- Trim whitespace from the key value and then assert `len(key) > 0` as a guard before any further validation.
+- Add an integration test that explicitly asserts an empty `apikey: ` header returns `401`.

@@ -25,3 +25,9 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -H "Authorization: Bearer $API_KEY" "$BASE_URL/facilities?per_page=1"
 ```
 Observed: `200` — expected `401` or `403`.
+
+## Remediation Steps
+- Restrict credential acceptance to a single, explicitly documented authentication scheme. Parse only the expected header (`apikey`) and ignore all others.
+- Return `401` for requests that present a credential via an alternative header or scheme.
+- Remove any code paths that extract credentials from `Authorization`, `X-Api-Key`, or other non-canonical headers unless those schemes are intentionally supported and documented.
+- Audit the authentication middleware to confirm there is exactly one credential-extraction path.

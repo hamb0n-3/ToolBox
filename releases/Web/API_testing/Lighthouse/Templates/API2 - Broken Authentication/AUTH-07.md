@@ -25,3 +25,8 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -H "apikey: ' OR '1'='1" "$BASE_URL/facilities?per_page=1"
 ```
 Observed: `[HTTP STATUS]` — a `400` or `401` with an input validation error is expected. Any `200` response warrants deeper investigation.
+
+## Remediation Steps
+- Validate that the API key value matches the expected format (e.g. alphanumeric, fixed length) before using it in any lookup. Return `400` for keys that fail structural validation.
+- Use parameterised queries or ORM methods for all credential lookups; never interpolate the key value into a SQL string.
+- Reject keys containing SQL metacharacters (`'`, `"`, `;`, `--`) with a `400` or `401` response at the input-validation layer.

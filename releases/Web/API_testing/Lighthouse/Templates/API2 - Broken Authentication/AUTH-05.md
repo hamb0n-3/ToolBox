@@ -24,3 +24,8 @@ Authentication can be bypassed by submitting a header with whitespace content. T
 curl -s -o /dev/null -w "%{http_code}\n" -H "apikey:    " "$BASE_URL/facilities?per_page=1"
 ```
 Observed: `200` — expected `401` or `403`.
+
+## Remediation Steps
+- Trim the API key value and validate that the result has a non-zero length before performing a credential lookup.
+- Reject whitespace-only values with `401` at the input-validation layer, before any database or cache query.
+- Add an integration test that asserts various whitespace-only key values (`" "`, `"\t"`, `"\n"`) all return `401`.
