@@ -28,3 +28,9 @@ for id in does_not_exist_999 0 -1 null undefined "%20" "vha_%00" "*"; do
 done
 ```
 Observed: `200` for `[ID VALUE]` — expected `400` or `404`.
+
+## Remediation Steps
+- Validate that all path-segment identifiers conform to the expected format (e.g. alphanumeric facility ID pattern) before passing them to the data layer. Reject non-conforming values with `400 Bad Request`.
+- Perform an explicit existence check: if no record matches the validated identifier, return `404 Not Found` rather than silently returning empty data or a `200`.
+- Apply object-level authorization checks to confirm the requesting caller is permitted to access the resolved record, not just that the record exists.
+- Reject or sanitise null bytes, wildcard characters, and other special values at the input-validation layer before any database or filesystem interaction occurs.

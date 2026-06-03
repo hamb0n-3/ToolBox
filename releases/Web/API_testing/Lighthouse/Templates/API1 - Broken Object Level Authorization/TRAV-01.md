@@ -29,3 +29,9 @@ for p in "..%2f..%2f..%2fetc%2fpasswd" \
 done
 ```
 Observed: `[FILE CONTENTS]` returned for traversal payload `[PAYLOAD]`. Confirm the `Sent URL` in the test report to verify the payload was not normalised by the client.
+
+## Remediation Steps
+- Decode and canonicalise the path component server-side before any validation or use. Use your framework's built-in path resolution functions rather than string manipulation.
+- Validate the resolved path against an explicit allow-list of permitted base directories. Reject any request where the resolved path escapes the intended directory.
+- Accept only known-good identifier patterns (e.g. `^[a-zA-Z0-9_-]+$`) at the routing layer and return `400` for any value that does not match.
+- Configure the web server or reverse proxy to decode and normalise percent-encoded sequences before they reach the application, and to block traversal sequences at the WAF/ingress layer as a defence-in-depth measure.
