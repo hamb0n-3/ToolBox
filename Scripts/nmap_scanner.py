@@ -5,6 +5,8 @@ nmap wrapper with per-host logging, pause/resume, scheduled start, time limit.
 Usage:
     ./nmap_wrapper.py 10.0.0.1 10.0.0.2 example.com    # targets on CLI
     ./nmap_wrapper.py 192.168.1.0/24                    # CIDR
+    ./nmap_wrapper.py 10.0.0.1-10.0.0.50                # full IP-IP range
+    ./nmap_wrapper.py 10.0.0.1-10.0.0.50,10.0.1.1-10.0.1.9   # comma-separated ranges
     ./nmap_wrapper.py -iL targets.txt                   # targets from file (like nmap)
     ./nmap_wrapper.py -iL targets.txt 10.0.0.5          # both work together
     ./nmap_wrapper.py 10.0.0.0/24 --time 8h             # 8h then auto-pause
@@ -15,6 +17,7 @@ Only run this against hosts you are authorized to scan.
 """
 
 import argparse
+import ipaddress
 import json
 import os
 import re
