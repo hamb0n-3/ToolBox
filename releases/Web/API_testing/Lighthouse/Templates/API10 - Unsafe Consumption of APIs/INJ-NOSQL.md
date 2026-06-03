@@ -28,3 +28,8 @@ for p in '{"$gt":""}' '{"$ne":null}' '[$ne]=1'; do
 done
 ```
 Observed: `[UNEXPECTED STATUS OR BEHAVIOUR]` for payload `[PAYLOAD]` — expected `400` or normal baseline response with no operator evaluation.
+
+## Remediation Steps
+- Validate and type-assert all query parameters before passing them to the database layer. A `state` filter should be a plain string, never an object; reject non-string types with `400`.
+- Use the database driver's safe query construction methods (e.g. MongoDB query builders with typed filter objects) rather than deserialising user input directly into a query document.
+- Reject input containing NoSQL operator keys (`$`, `{`, `}`) at the input-validation layer.

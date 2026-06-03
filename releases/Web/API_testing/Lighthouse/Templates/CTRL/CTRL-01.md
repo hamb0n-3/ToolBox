@@ -24,3 +24,8 @@ No functional impact by itself. However, a failing baseline invalidates the resu
 curl -s -i -H "apikey: $API_KEY" "$BASE_URL/facilities?per_page=1&page=1"
 ```
 Observed response: `[HTTP STATUS]` — expected `200` with `Content-Type: application/json`.
+
+## Remediation Steps
+- This is a positive control check, not a vulnerability finding. No remediation is required for the API itself.
+- If this check fails during a test run, investigate the cause before relying on any other test results: confirm the `$API_KEY` is valid and not expired, verify the `$BASE_URL` is reachable from the test host, and check for any known API outages or maintenance windows.
+- All other test results should be treated as inconclusive until this baseline check passes.

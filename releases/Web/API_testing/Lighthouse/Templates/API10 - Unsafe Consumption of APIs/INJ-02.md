@@ -28,3 +28,8 @@ curl -s -G -i -H "apikey: $API_KEY" "$BASE_URL/facilities" \
 Observed: payload `<script>alert(1)</script>` reflected unescaped in the body; `Content-Type: text/html` with no `X-Content-Type-Options: nosniff`.
 
 > **Note:** Reflection inside a `application/json` response **with** `nosniff` set is not exploitable as XSS and should be recorded as Informational only.
+
+## Remediation Steps
+- HTML-encode all user-supplied values before rendering them in any HTML context. Use your framework's built-in output encoding functions rather than manual string replacement.
+- Return API responses with `Content-Type: application/json` and `X-Content-Type-Options: nosniff` so that even if a payload is reflected in the JSON body, the browser will not render it as HTML.
+- If any endpoint intentionally renders HTML, apply a strict `Content-Security-Policy` that disables inline scripts.

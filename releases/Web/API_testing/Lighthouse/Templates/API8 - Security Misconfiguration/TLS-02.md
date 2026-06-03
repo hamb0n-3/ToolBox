@@ -25,3 +25,8 @@ echo | openssl s_client -connect "$HOST:443" -servername "$HOST" 2>/dev/null \
   | openssl x509 -noout -dates
 ```
 Observed: `notAfter=[DATE]` — `[N]` days remaining (threshold: 14).
+
+## Remediation Steps
+- Implement automated certificate renewal before expiry (e.g. Let's Encrypt with certbot/acme.sh, AWS ACM auto-renewal, or HashiCorp Vault PKI).
+- Configure monitoring alerts that fire at 30 days and again at 14 days before expiry so there is time to respond before clients are affected.
+- Test renewal automation in a non-production environment periodically to confirm it works end-to-end before it is needed in production.

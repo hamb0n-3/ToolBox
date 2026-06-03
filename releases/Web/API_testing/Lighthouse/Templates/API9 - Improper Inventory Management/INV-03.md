@@ -25,3 +25,8 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   -H "apikey: $API_KEY" "$BASE_URL/openapi.json"
 ```
 Observed: `200` — confirm that specification exposure is intentional for this environment.
+
+## Remediation Steps
+- If the OpenAPI specification is intentionally public (developer portal), confirm this is documented and reviewed. No code change is required.
+- If the specification exposure is unintentional, restrict access to the `/openapi.json` (and `/swagger-ui.html`) endpoints to authenticated users or internal networks only.
+- Review the exposed specification for any endpoints, parameters, or schemas that should not be visible externally and redact them from the public version.

@@ -28,3 +28,9 @@ curl -s -H "apikey: $API_KEY" \
   "$HOST_ROOT/services/va_facilities/v1/zzz-nonexistent"
 ```
 Observed: `[STACK TRACE EXCERPT OR INTERNAL PATH]` in the response body.
+
+## Remediation Steps
+- Configure a global exception handler that catches all unhandled errors and returns a generic `500` response body (e.g. `{"error": "Internal server error"}`) with no stack trace or internal detail.
+- Set the framework or runtime to production mode to suppress debug output (e.g. `RAILS_ENV=production`, `DEBUG=False`, `NODE_ENV=production`).
+- Log full error details (stack trace, request context) to a secure, internal log aggregator — not to the HTTP response.
+- Validate this is working by confirming that triggering a known error path returns a generic message with no framework or path information.

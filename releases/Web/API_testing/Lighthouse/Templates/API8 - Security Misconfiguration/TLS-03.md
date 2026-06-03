@@ -27,3 +27,8 @@ echo | openssl s_client -connect "$HOST:443" -tls1 2>&1 | grep -i "protocol"
 echo | openssl s_client -connect "$HOST:443" -tls1_1 2>&1 | grep -i "protocol"
 ```
 Observed: handshake succeeded and negotiated `[VERSION]` — expected connection refusal.
+
+## Remediation Steps
+- Disable TLS 1.0 and TLS 1.1 in the server TLS configuration (see TLS-01 for specific directives).
+- Apply the change at every TLS termination point — origin server, load balancer, CDN edge — as each terminates its own TLS session.
+- Confirm with `openssl s_client -connect $HOST:443 -tls1` and `-tls1_1`; a successful handshake after the change indicates the fix was not applied at all layers.

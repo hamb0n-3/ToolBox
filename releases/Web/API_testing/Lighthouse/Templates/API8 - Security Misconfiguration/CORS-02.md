@@ -28,3 +28,8 @@ curl -s -D - -o /dev/null -X OPTIONS \
   "$BASE_URL/facilities" | grep -i "access-control"
 ```
 Observed: `Access-Control-Allow-Origin: [VALUE]` and `Access-Control-Allow-Headers: apikey` in the preflight response for an arbitrary origin.
+
+## Remediation Steps
+- Apply the same origin allow-list to preflight (`OPTIONS`) responses as to actual requests. The preflight and the main response must both be gated by the same policy.
+- Avoid framework middleware that grants preflight approval to all origins by default; explicitly configure the allowed origin list.
+- Set `Access-Control-Max-Age` to an appropriate value to cache preflight results and reduce the attack window from repeated preflight probing.

@@ -28,3 +28,8 @@ for p in ";id" "|id" '$(id)' '`id`' "&& whoami"; do
 done
 ```
 Observed: response body contained `[COMMAND OUTPUT]` for payload `[PAYLOAD]`.
+
+## Remediation Steps
+- Eliminate all shell invocations that include user-supplied data. Use language-native libraries for any task currently delegated to shell commands (e.g. use a Python library for file operations instead of `subprocess.run("ls " + user_input)`).
+- If a shell call is unavoidable, pass arguments as a list (never a string) so the shell does not interpret them, and apply a strict whitelist to each argument value.
+- Run the application process under a minimal-privilege service account to limit the blast radius if injection does occur.

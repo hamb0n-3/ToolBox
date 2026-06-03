@@ -28,3 +28,8 @@ for p in '${7*7}' '{{7*7}}' '#{7*7}' '<%= 7*7 %>'; do
 done
 ```
 Observed: `49` in the response body for payload `[PAYLOAD]`, confirming arithmetic evaluation by a template engine.
+
+## Remediation Steps
+- Never pass user-supplied input to a template rendering function. Use static templates with data binding — pass user data as variables into the template context, not as part of the template string itself.
+- Disable or sandbox the template engine in production if it is not required for the API response path.
+- If a template engine is genuinely required, enable the sandbox/escape mode (e.g. Jinja2's `SandboxedEnvironment`) and treat any template expression evaluation as a critical finding requiring immediate investigation.

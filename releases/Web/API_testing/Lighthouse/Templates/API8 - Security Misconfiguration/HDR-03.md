@@ -25,3 +25,8 @@ curl -s -D - -o /dev/null -H "apikey: $API_KEY" "$BASE_URL/facilities?per_page=1
   | grep -i "^content-type:"
 ```
 Observed: `Content-Type: [OBSERVED VALUE]` — expected `application/json` or `application/vnd.api+json`.
+
+## Remediation Steps
+- Explicitly set `Content-Type: application/json; charset=utf-8` (or `application/vnd.api+json`) on all API responses at the framework or middleware level.
+- Pair with `X-Content-Type-Options: nosniff` to prevent browsers from overriding the declared type.
+- Add an integration test that asserts the `Content-Type` header on every response matches the expected value.

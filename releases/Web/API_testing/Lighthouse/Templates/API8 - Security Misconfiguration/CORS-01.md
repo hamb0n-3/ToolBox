@@ -26,3 +26,8 @@ curl -s -D - -o /dev/null -H "apikey: $API_KEY" \
   | grep -i "access-control"
 ```
 Observed: `Access-Control-Allow-Origin: [VALUE]` and `Access-Control-Allow-Credentials: [VALUE]`. A reflected arbitrary origin combined with `credentials: true` confirms the finding.
+
+## Remediation Steps
+- Maintain an explicit server-side allow-list of trusted origins. On each request, compare the `Origin` header against the list and echo it back only if it matches; never reflect an arbitrary origin.
+- Never combine `Access-Control-Allow-Origin: *` with `Access-Control-Allow-Credentials: true` — the browser will reject it, and attempting it is a configuration error.
+- If a broad origin policy is required, reconsider whether the API should rely on session cookies/credentials at all, or enforce API-key-based auth that is not affected by CORS.

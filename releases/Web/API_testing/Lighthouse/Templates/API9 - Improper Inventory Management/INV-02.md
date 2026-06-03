@@ -28,3 +28,8 @@ for p in /actuator /actuator/health /actuator/env /health /metrics \
 done
 ```
 Observed: `200` for `[PATH]`. Response contents: `[SUMMARY OF EXPOSED DATA]`.
+
+## Remediation Steps
+- Remove or disable all debug, actuator, and framework management endpoints in production deployments. If they must exist for operational purposes, restrict them to internal network ranges at the firewall or load-balancer level (not the application level).
+- Audit production configurations to confirm that management frameworks (Spring Boot Actuator, Django Debug Toolbar, Rails info pages) are either disabled or restricted.
+- Add the known debug paths to the automated security scan suite and assert they return `404` or `403` in production.

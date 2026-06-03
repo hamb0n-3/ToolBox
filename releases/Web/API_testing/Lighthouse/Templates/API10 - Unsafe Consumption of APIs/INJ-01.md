@@ -30,3 +30,8 @@ curl -s -G -H "apikey: $API_KEY" "$BASE_URL/facilities" \
 Observed: `[DATABASE ERROR TEXT]` or `200` for a tautological payload — expected `400` with a generic validation error.
 
 > **Note:** This test checks for error-based SQL injection only. A clean result does not rule out blind or time-based SQL injection.
+
+## Remediation Steps
+- Use parameterised queries or prepared statements for all database interactions. Never construct SQL by concatenating or interpolating user-supplied values.
+- Apply input validation to reject values that do not conform to the expected format (e.g. two-letter state code `^[A-Z]{2}$`) before they reach the data layer.
+- Enable a WAF rule for SQL injection patterns as a defence-in-depth measure, but treat it as supplementary to — not a replacement for — parameterised queries.

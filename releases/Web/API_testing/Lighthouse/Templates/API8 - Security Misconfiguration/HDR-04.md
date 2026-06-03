@@ -25,3 +25,8 @@ curl -s -D - -o /dev/null -H "apikey: $API_KEY" "$BASE_URL/facilities?per_page=1
   | grep -i "^set-cookie:"
 ```
 Observed: `Set-Cookie: [VALUE]` — missing `[Secure / HttpOnly / SameSite]` flag(s).
+
+## Remediation Steps
+- Set all three security flags on every `Set-Cookie` header: `Secure`, `HttpOnly`, and `SameSite=Strict` (or `SameSite=Lax` where cross-site navigation is required).
+- Configure cookie attributes at the session or cookie-management layer so they apply globally rather than on a per-route basis.
+- If the cookie serves only the same-site first-party context, prefer `SameSite=Strict`. For OAuth or federated flows that require cross-site delivery, evaluate whether a cookie is the right credential transport.

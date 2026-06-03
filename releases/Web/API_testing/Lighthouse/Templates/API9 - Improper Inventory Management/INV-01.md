@@ -28,3 +28,8 @@ for v in v0 v2 v3; do
 done
 ```
 Observed: `200` for version `[VERSION]` — this path should return `404`.
+
+## Remediation Steps
+- Decommission deprecated API versions by returning `404 Not Found` or `410 Gone` for all paths under the old version prefix. Remove the route configuration entirely rather than leaving handlers in place.
+- Document the sunset timeline publicly and enforce it; do not leave deprecated versions accessible indefinitely for convenience.
+- Maintain an inventory of all active API version paths and include them in routine security scans to catch regressions.
