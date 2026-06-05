@@ -11,7 +11,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 #  { scan_id: (start_cron, stop_cron) }
 SCHEDULES = {
-    12: ({"day_of_week": "mon", "hour": 2, "minute": 0}, {"day_of_week": "mon", "hour": 6, "minute": 0}),
+    3783: ({"day_of_week": "mon", "hour": 2, "minute": 0}, {"day_of_week": "mon", "hour": 6, "minute": 0}),
 }
 
 def act(scan_id, action):
