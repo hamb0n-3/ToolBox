@@ -19,8 +19,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # scan_id: (start_cron, stop_cron) -- cron fields as dicts
 SCHEDULES = {
-    12: ({"day_of_week": "mon-sun", "hour": 17, "minute": 0},
-         {"day_of_week": "mon-sun", "hour": 7, "minute": 0}),
+    12: ({"day_of_week": "mon-sun", "hour": 2, "minute": 0},
+         {"day_of_week": "mon-sun", "hour": 6, "minute": 0}),
 }
 
 def act(scan_id, action):
@@ -42,7 +42,8 @@ for sid, (start, stop) in SCHEDULES.items():
 
 print(f"[{ts()}] Upcoming jobs:")
 for j in sched.get_jobs():
-    print(f"[{ts()}]   {j.args} -> next run {j.next_run_time}")
+    nrt = getattr(j, "next_run_time", "n/a (APScheduler 4.x — pin to <4 for this info)")
+    print(f"[{ts()}]   {j.args} -> next run {nrt}")
 
 print(f"[{ts()}] Scheduler running. Waiting for scheduled times... (Ctrl+C to stop)")
 try:
