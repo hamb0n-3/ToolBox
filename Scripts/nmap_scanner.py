@@ -293,13 +293,31 @@ class ScanState:
         self.targets = []
         self.completed = []
         self.output_dir = str(OUTPUT_BASE)
+        # Wall-clock the run began (epoch + ISO). Set once at creation and
+        # carried across resumes so elapsed time reflects the original start.
+        self.started_at = time.time()
+        # Set only when the scan is paused; None while running / on a fresh run.
+        self.paused_at = None
 
     def save(self):
         self.state_file.write_text(json.dumps({
+            "pid": self.pid,
             "targets": self.targets,
             "completed": self.completed,
             "output_dir": self.output_dir,
+            "started_at": self.started_at,
+            "started_at_iso": datetime.fromtimestamp(self.started_at).isoformat(timespec="seconds"),
+            "paused_at": self.paused_at,
+            "paused_at_iso": (datetime.fromtimestamp(self.paused_at).isoformat(timespec="seconds")
+                              if self.paused_at is not None else None),
+            "elapsed_seconds": round((self.paused_at or time.time()) - self.started_at, 1),
         }, indent=2))
+
+    def save_paused(self):
+        """Stamp the pause time, then persist. Called when the scan is paused so
+        the state file records the PID and when work stopped for --resume."""
+        self.paused_at = time.time()
+        self.save()
 
     @classmethod
     def load(cls, pid):
@@ -310,6 +328,11 @@ class ScanState:
         s.targets = data["targets"]
         s.completed = data["completed"]
         s.output_dir = data["output_dir"]
+        # Preserve the original start time across resumes; fall back to now for
+        # state files written before this field existed.
+        s.started_at = data.get("started_at", time.time())
+        # A fresh resume is no longer paused.
+        s.paused_at = None
         return s
 
 
@@ -487,8 +510,12 @@ def main():
 
     # --- finish ---
     if _pause_requested:
-        state.save()
+        state.save_paused()
+        elapsed = state.paused_at - state.started_at
         print(f"\n[*] Paused. {len(state.completed)}/{len(state.targets)} hosts done.")
+        print(f"[*] PID {state.pid}, ran {elapsed:.0f}s "
+              f"(started {datetime.fromtimestamp(state.started_at).strftime('%Y-%m-%d %H:%M:%S')}, "
+              f"paused {datetime.fromtimestamp(state.paused_at).strftime('%Y-%m-%d %H:%M:%S')}).")
         print(f"[*] Resume with: {sys.argv[0]} --resume {state.pid}")
         print(f"[*] State file: {state.state_file}")
     else:
