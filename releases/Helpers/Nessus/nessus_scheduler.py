@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Minimal Nessus scan scheduler (no cron). pip install requests apscheduler"""
+"""pip install requests apscheduler"""
 import os, urllib3, requests
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-BASE = f"{os.environ.get('NESSUS_HOST', 'https://localhost')}:8834"
+BASE = f"{os.environ.get('NESSUS_HOST', '')}:8834"
 HEADERS = {"X-ApiKeys": f"accessKey={os.environ['NESSUS_ACCESS_KEY']}; "
                         f"secretKey={os.environ['NESSUS_SECRET_KEY']}"}
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
