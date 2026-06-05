@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ip install requests apscheduler"""
+"""pip install requests apscheduler"""
 import os, urllib3, requests
 from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
