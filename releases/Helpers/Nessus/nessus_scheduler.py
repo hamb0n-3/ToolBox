@@ -36,8 +36,8 @@ sched = BlockingScheduler()  # add timezone="America/New_York" if jobs fire at t
 print(f"[{ts()}] Scheduler timezone: {sched.timezone}")
 
 for sid, (start, stop) in SCHEDULES.items():
-    sched.add_job(act, CronTrigger(**start), args=[sid, "launch"])
-    sched.add_job(act, CronTrigger(**stop),  args=[sid, "stop"])
+    sched.add_job(act, CronTrigger(**start), args=[sid, "resume"])
+    sched.add_job(act, CronTrigger(**stop),  args=[sid, "pause"])
     print(f"[{ts()}] Registered scan {sid}: start={start}, stop={stop}")
 
 print(f"[{ts()}] Upcoming jobs:")
