@@ -19,8 +19,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # scan_id: (start_cron, stop_cron) -- cron fields as dicts
 SCHEDULES = {
-    12: ({"day_of_week": "mon-sun", "hour": 2, "minute": 0},
-         {"day_of_week": "mon-sun", "hour": 6, "minute": 0}),
+    12: ({"day_of_week": "mon-sun", "hour": 17, "minute": 0},
+         {"day_of_week": "mon-sun", "hour": 7, "minute": 0}),
 }
 
 def act(scan_id, action):
