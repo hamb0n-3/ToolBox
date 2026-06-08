@@ -54,7 +54,10 @@ SERVICE_ARGS = [
 ]
 
 NMAP_BIN = "nmap"
-STATE_DIR = Path("/tmp")
+# State file lives in the directory the scan is launched from (./) so it sits
+# alongside the run and is not exposed in a shared, predictable /tmp path.
+# Note: --resume must therefore be run from the same working directory.
+STATE_DIR = Path(".")
 # ========================================================
 
 _pause_requested = False
