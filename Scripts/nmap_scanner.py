@@ -502,7 +502,7 @@ def start_window_scheduler(window):
     sched.add_job(window_pause, CronTrigger(hour=eh, minute=em), id="window_pause")
     # Level-triggered: re-check every minute so a missed edge self-corrects within
     # ~1 minute of the process next being awake.
-    sched.add_job(reconcile, IntervalTrigger(minutes=10), id="window_reconcile")
+    sched.add_job(reconcile, IntervalTrigger(minutes=1), id="window_reconcile")
     sched.start()
 
     win = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
@@ -661,6 +661,8 @@ def main():
                 service_scan_host(host, ports, output_dir)
             except Exception as e:
                 print(f"    [!] service scan error: {e}")
+                idx += 1  # genuine error — skip this run; resume retries it
+                continue
             if _window_paused:
                 continue  # window closed mid-scan — redo this host once it reopens
         else:
