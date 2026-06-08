@@ -11,6 +11,7 @@ Usage:
     ./nmap_wrapper.py -iL targets.txt 10.0.0.5          # both work together
     ./nmap_wrapper.py 10.0.0.0/24 --time 8h             # 8h then auto-pause
     ./nmap_wrapper.py 10.0.0.0/24 --start 14:46         # wait until 14:46
+    ./nmap_wrapper.py 10.0.0.0/24 --window 17:00-07:00  # scan 5pm-7am daily, idle otherwise
     ./nmap_wrapper.py --resume 12345                    # resume by old PID
 
 Only run this against hosts you are authorized to scan.
@@ -59,6 +60,12 @@ STATE_DIR = Path("/tmp")
 _pause_requested = False
 _current_proc = None
 _prompting = False
+# Scheduled scan-window state. _window_paused is True while we're outside the
+# allowed wall-clock window; _resume_event is set when the window is open so the
+# main loop can block on it while paused. Distinct from _pause_requested, which
+# means "stop and exit" — a window pause means "stop and wait".
+_window_paused = False
+_resume_event = threading.Event()
 
 
 # --------------------- argument parsing helpers ---------------------
@@ -83,6 +90,37 @@ def parse_start_time(s):
     if target <= now:
         target += timedelta(days=1)
     return target
+
+
+def parse_window(s):
+    """Parse a daily scan window 'HH:MM-HH:MM' into ((sh, sm), (eh, em)).
+    The window may wrap past midnight (e.g. 17:00-07:00 = 5pm to 7am)."""
+    try:
+        start_s, end_s = s.split("-")
+        sh, sm = (int(x) for x in start_s.split(":"))
+        eh, em = (int(x) for x in end_s.split(":"))
+    except Exception:
+        raise argparse.ArgumentTypeError(
+            f"invalid window {s!r} (use HH:MM-HH:MM, e.g. 17:00-07:00)"
+        )
+    for h, m in ((sh, sm), (eh, em)):
+        if not (0 <= h < 24 and 0 <= m < 60):
+            raise argparse.ArgumentTypeError(f"invalid time of day in window {s!r}")
+    if (sh, sm) == (eh, em):
+        raise argparse.ArgumentTypeError(f"window start and end are equal in {s!r}")
+    return (sh, sm), (eh, em)
+
+
+def in_window(now, start, end):
+    """True if `now` (a datetime) falls inside the [start, end) window, where
+    start/end are (hour, minute) tuples. Handles windows that wrap midnight."""
+    cur = now.hour * 60 + now.minute
+    s = start[0] * 60 + start[1]
+    e = end[0] * 60 + end[1]
+    if s <= e:
+        return s <= cur < e
+    # Wraps midnight, e.g. 17:00-07:00 -> in window from 17:00 to 23:59 or 00:00 to 06:59.
+    return cur >= s or cur < e
 
 
 # --------------------- target normalization ---------------------
@@ -127,6 +165,14 @@ def normalize_targets(raw_targets):
 
 # --------------------- nmap process management ---------------------
 
+def _halt_work():
+    """True when in-progress nmap work should stop now — either a user kill/pause
+    (which exits) or a scheduled window pause (which waits). Used to bail out of
+    scan stages and to suppress the nmap-exited-nonzero message when we are the
+    ones who killed it."""
+    return _pause_requested or _window_paused
+
+
 def check_nmap():
     try:
         subprocess.run([NMAP_BIN, "--version"], capture_output=True, check=True)
@@ -152,8 +198,9 @@ def run_nmap(cmd):
     stdout, stderr = _current_proc.communicate()
     rc = _current_proc.returncode if _current_proc.returncode is not None else -1
     _current_proc = None
-    # Surface real nmap failures; suppress if we killed it ourselves (pause/kill).
-    if rc != 0 and not _pause_requested:
+    # Surface real nmap failures; suppress if we killed it ourselves (pause/kill
+    # or a scheduled window close).
+    if rc != 0 and not _halt_work():
         sys.stderr.write(f"[!] nmap exited {rc} for: {' '.join(cmd)}\n")
         if stderr.strip():
             sys.stderr.write(f"    {stderr.strip()}\n")
@@ -202,7 +249,7 @@ def discovery_scan_host(host):
     """Full-port discovery on one host. Returns sorted list of open ports."""
     cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", "-", host]
     _, stdout, _ = run_nmap(cmd)
-    if _pause_requested:
+    if _halt_work():
         return []
     ports = []
     for line in stdout.splitlines():
@@ -259,7 +306,7 @@ def service_scan_host(host, ports, output_dir):
             host,
         ]
         run_nmap(cmd)
-        if _pause_requested:
+        if _halt_work():
             return
 
         svc_dir = output_dir / "ServiceScans"
@@ -363,6 +410,8 @@ def install_interrupt_handler():
                 os._exit(130)
             elif choice == "p":
                 _pause_requested = True
+                # Wake the main loop if it is blocked waiting for a scan window.
+                _resume_event.set()
                 kill_current_proc()
                 sys.stderr.write("[*] Pausing — will stop after current host settles.\n")
         finally:
@@ -380,6 +429,96 @@ def start_time_limit(seconds):
         _pause_requested = True
         kill_current_proc()
     threading.Thread(target=worker, daemon=True).start()
+
+
+# --------------------- scheduled scan window (APScheduler) ---------------------
+
+def window_pause():
+    """Window closed: stop the running nmap and make the main loop wait. Called
+    from the APScheduler thread at the window's end time."""
+    global _window_paused
+    if _window_paused:
+        return
+    _window_paused = True
+    _resume_event.clear()
+    sys.stderr.write("\n[*] Scan window closed — pausing after current host settles.\n")
+    kill_current_proc()
+
+
+def window_resume():
+    """Window opened: let the main loop proceed. Called from the APScheduler
+    thread at the window's start time."""
+    global _window_paused
+    if not _window_paused:
+        return
+    _window_paused = False
+    sys.stderr.write("\n[*] Scan window open — resuming.\n")
+    _resume_event.set()
+
+
+def wait_for_window(state):
+    """If we are outside the scan window, checkpoint progress and block until the
+    window reopens (or a user kill/pause unblocks us). No-op when no window is
+    configured or we are inside it."""
+    if not _window_paused:
+        return
+    state.save()
+    sys.stderr.write("[*] Outside scan window — waiting for it to reopen "
+                     "(Ctrl-C to kill/pause)...\n")
+    # Loop with a timeout so signals are delivered promptly and we re-check both
+    # the window flag (cleared by window_resume) and a user pause request.
+    while _window_paused and not _pause_requested:
+        _resume_event.wait(timeout=30)
+
+
+def start_window_scheduler(window):
+    """Run only inside the given daily wall-clock window, every day (Mon-Sun),
+    using APScheduler cron triggers: pause at the end time, resume at the start
+    time. Returns the live scheduler (keep a reference so it is not GC'd)."""
+    global _window_paused
+    try:
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.triggers.cron import CronTrigger
+        from apscheduler.triggers.interval import IntervalTrigger
+    except ImportError:
+        sys.stderr.write("[!] --window requires APScheduler: pip install apscheduler\n")
+        sys.exit(1)
+
+    (sh, sm), (eh, em) = window
+
+    def reconcile():
+        """Level-triggered safety net: drive the paused/running state to match
+        where the wall clock actually is right now. window_pause/window_resume
+        are idempotent, so this is silent except right at a boundary or after a
+        cron fire was missed (e.g. the host was asleep at 17:00 and woke later)."""
+        if in_window(datetime.now(), (sh, sm), (eh, em)):
+            window_resume()
+        else:
+            window_pause()
+
+    sched = BackgroundScheduler()
+    # Edge-triggered: react at the exact boundary instants, every day (Mon-Sun).
+    sched.add_job(window_resume, CronTrigger(hour=sh, minute=sm), id="window_resume")
+    sched.add_job(window_pause, CronTrigger(hour=eh, minute=em), id="window_pause")
+    # Level-triggered: re-check every minute so a missed edge self-corrects within
+    # ~1 minute of the process next being awake.
+    sched.add_job(reconcile, IntervalTrigger(minutes=10), id="window_reconcile")
+    sched.start()
+
+    win = f"{sh:02d}:{sm:02d}-{eh:02d}:{em:02d}"
+    # Set the initial state directly — the interval job's first run is a minute
+    # out, and we want the right state from the moment the loop starts.
+    if in_window(datetime.now(), (sh, sm), (eh, em)):
+        _window_paused = False
+        _resume_event.set()
+        print(f"[*] Scan window {win} (daily) — inside it now; "
+              f"will pause at {eh:02d}:{em:02d}.")
+    else:
+        _window_paused = True
+        _resume_event.clear()
+        print(f"[*] Scan window {win} (daily) — outside it now; "
+              f"will start at {sh:02d}:{sm:02d}.")
+    return sched
 
 
 # --------------------- main ---------------------
@@ -400,6 +539,10 @@ def main():
                     help="run for this long then auto-pause (e.g. 30s, 8m, 8h, 2d)")
     ap.add_argument("--start", metavar="HH:MM", type=parse_start_time,
                     help="wait until this wall-clock time before starting")
+    ap.add_argument("--window", metavar="HH:MM-HH:MM", type=parse_window,
+                    help="only scan inside this daily window, every day (Mon-Sun); "
+                         "pauses outside it and resumes when it reopens. e.g. "
+                         "17:00-07:00 scans 5pm-7am. Requires APScheduler.")
     args = ap.parse_args()
 
     check_nmap()
@@ -465,6 +608,11 @@ def main():
         print(f"[*] Time limit: {args.time}s — will auto-pause.")
         start_time_limit(args.time)
 
+    # --- daily scan window (APScheduler cron triggers) ---
+    sched = None  # keep a reference so the BackgroundScheduler is not GC'd
+    if args.window is not None:
+        sched = start_window_scheduler(args.window)
+
     print(f"[*] PID {os.getpid()} — Ctrl-C to pause/kill; "
           f"resume with: {sys.argv[0]} --resume {os.getpid()}")
     print(f"[*] Output: {state.output_dir}")
@@ -476,37 +624,55 @@ def main():
     (output_dir / "ServiceScans").mkdir(parents=True, exist_ok=True)
 
     total = len(state.targets)
-    for i, host in enumerate(state.targets, 1):
-        if host in state.completed:
+    completed_set = set(state.completed)
+    # Index-based loop (not enumerate) so that if the scan window closes partway
+    # through a host we can wait and then redo that same host, rather than
+    # skipping it. A user pause/kill takes the exit path (break) instead.
+    idx = 0
+    while idx < total:
+        host = state.targets[idx]
+        if host in completed_set:
+            idx += 1
             continue
+
+        # Block here while outside the scheduled scan window; returns at once when
+        # no window is configured or we are inside it.
+        wait_for_window(state)
         if _pause_requested:
             break
 
-        print(f"\n[{i}/{total}] {host}: discovery scan...")
+        print(f"\n[{idx + 1}/{total}] {host}: discovery scan...")
         try:
             ports = discovery_scan_host(host)
         except Exception as e:
             print(f"    [!] discovery error: {e}")
+            idx += 1  # genuine error — skip this run; resume retries it
             continue
+        if _window_paused:
+            continue  # window closed mid-scan — redo this host once it reopens
         if _pause_requested:
             break
 
         if ports:
             print(f"    open: {', '.join(str(p) for p in ports)}")
             update_open_ports(host, ports, output_dir)
-            print(f"[{i}/{total}] {host}: service scan on {len(ports)} port(s)...")
+            print(f"[{idx + 1}/{total}] {host}: service scan on {len(ports)} port(s)...")
             try:
                 service_scan_host(host, ports, output_dir)
             except Exception as e:
                 print(f"    [!] service scan error: {e}")
+            if _window_paused:
+                continue  # window closed mid-scan — redo this host once it reopens
         else:
             print(f"    no open ports")
 
         if _pause_requested:
             break
 
+        completed_set.add(host)
         state.completed.append(host)
         state.save()  # checkpoint: written to disk after EVERY host
+        idx += 1
 
     # --- finish ---
     if _pause_requested:
