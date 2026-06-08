@@ -369,12 +369,30 @@ class ScanState:
         self.paused_at = time.time()
         self.save()
 
+    @staticmethod
+    def _resolve_ref(ref):
+        """Map a --resume argument to a state-file path. Accepts either a path
+        to a state json file or a bare PID (looked up in STATE_DIR)."""
+        p = Path(str(ref))
+        if p.exists():
+            return p
+        try:
+            pid = int(ref)
+        except (ValueError, TypeError):
+            raise FileNotFoundError(
+                f"{ref!r} is neither an existing state file nor a PID")
+        return STATE_DIR / f"nmap_wrapper_state_{pid}.json"
+
     @classmethod
-    def load(cls, pid):
-        s = cls(pid=pid)
-        if not s.state_file.exists():
-            raise FileNotFoundError(s.state_file)
-        data = json.loads(s.state_file.read_text())
+    def load(cls, ref):
+        state_file = cls._resolve_ref(ref)
+        if not state_file.exists():
+            raise FileNotFoundError(state_file)
+        data = json.loads(state_file.read_text())
+        s = cls()
+        # Point at the file we loaded; main re-keys it under the new PID.
+        s.state_file = state_file
+        s.pid = data.get("pid", s.pid)
         s.targets = data["targets"]
         s.completed = data["completed"]
         s.output_dir = data["output_dir"]
@@ -536,8 +554,9 @@ def main():
                          "IP-IP (10.0.0.1-10.0.0.50), and comma-separated")
     ap.add_argument("-iL", dest="input_file", metavar="FILE",
                     help="read targets from a file (one per line, # comments ok)")
-    ap.add_argument("--resume", metavar="PID", type=int,
-                    help="resume a paused scan by its original PID")
+    ap.add_argument("--resume", metavar="PID|FILE",
+                    help="resume a paused scan by its original PID or by the "
+                         "path to its state json file")
     ap.add_argument("--time", metavar="DUR", type=parse_duration,
                     help="run for this long then auto-pause (e.g. 30s, 8m, 8h, 2d)")
     ap.add_argument("--start", metavar="HH:MM", type=parse_start_time,
@@ -558,7 +577,7 @@ def main():
         try:
             state = ScanState.load(args.resume)
         except FileNotFoundError as e:
-            sys.stderr.write(f"[!] no state file for PID {args.resume}: {e}\n")
+            sys.stderr.write(f"[!] cannot resume {args.resume!r}: {e}\n")
             sys.exit(1)
         # Re-key state file under the new PID so subsequent pauses use the new PID.
         old_file = state.state_file
@@ -569,7 +588,7 @@ def main():
             old_file.unlink()
         except FileNotFoundError:
             pass
-        print(f"[*] Resumed from PID {args.resume}. "
+        print(f"[*] Resumed from {args.resume}. "
               f"{len(state.completed)}/{len(state.targets)} hosts already done.")
     else:
         raw_targets = []
