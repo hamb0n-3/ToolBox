@@ -4,6 +4,7 @@ import os, urllib3, requests
 from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 def ts():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -31,6 +32,40 @@ def act(scan_id, action):
         print(f"[{ts()}] SUCCESS: {action} -> scan {scan_id} [{r.status_code}]")
     except requests.exceptions.RequestException as e:
         print(f"[{ts()}] ERROR: {action} -> scan {scan_id} FAILED: {e}")
+
+# Per-scan desired state: True = should be running, False = should be paused.
+# None until first set, so the first decision for a scan always fires.
+_running = {}
+
+def set_running(scan_id, running):
+    """Idempotent wrapper around act(): only hit the API when the scan's desired
+    state actually changes. This lets the secondary timing check (reconcile) run
+    every minute without spamming resume/pause when nothing has changed."""
+    if _running.get(scan_id) is running:
+        return
+    _running[scan_id] = running
+    act(scan_id, "resume" if running else "pause")
+
+def in_window(now, start, stop):
+    """True if `now` falls inside the [start, stop) daily window. start/stop are
+    the cron dicts from SCHEDULES; handles windows that wrap past midnight
+    (e.g. 17:00-07:00 = inside from 17:00 to 06:59)."""
+    cur = now.hour * 60 + now.minute
+    s = start["hour"] * 60 + start["minute"]
+    e = stop["hour"] * 60 + stop["minute"]
+    if s <= e:
+        return s <= cur < e
+    return cur >= s or cur < e
+
+def reconcile():
+    """Secondary timing check: a level-triggered safety net that runs every
+    minute and drives each scan to the state the wall clock says it should be in.
+    Because set_running is idempotent this is silent except right at a window
+    boundary or after a cron edge was missed (e.g. the host was asleep at 17:00
+    and only woke later) — in which case it self-corrects within ~1 minute."""
+    now = datetime.now()
+    for sid, (start, stop) in SCHEDULES.items():
+        set_running(sid, in_window(now, start, stop))
 
 sched = BlockingScheduler()  # add timezone="America/New_York" if jobs fire at the wrong time
 print(f"[{ts()}] Scheduler timezone: {sched.timezone}")
