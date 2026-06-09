@@ -71,13 +71,24 @@ sched = BlockingScheduler()  # add timezone="America/New_York" if jobs fire at t
 print(f"[{ts()}] Scheduler timezone: {sched.timezone}")
 
 for sid, (start, stop) in SCHEDULES.items():
-    sched.add_job(act, CronTrigger(**start), args=[sid, "resume"])
-    sched.add_job(act, CronTrigger(**stop),  args=[sid, "pause"])
+    sched.add_job(set_running, CronTrigger(**start), args=[sid, True])
+    sched.add_job(set_running, CronTrigger(**stop),  args=[sid, False])
     print(f"[{ts()}] Registered scan {sid}: start={start}, stop={stop}")
+
+# Secondary timing check: re-check every minute so a missed cron edge (host
+# asleep at the boundary, clock skew, restart mid-window) self-corrects within
+# ~1 minute instead of waiting for the next edge.
+sched.add_job(reconcile, IntervalTrigger(minutes=1), id="reconcile")
+print(f"[{ts()}] Registered secondary timing check (every 1 min).")
 
 print(f"[{ts()}] Upcoming jobs:")
 for j in sched.get_jobs():
     print(f"[{ts()}]   {j.args}")
+
+# Drive each scan to the correct state right now, before blocking on start(), so
+# a scheduler launched mid-window acts immediately rather than waiting for an edge.
+print(f"[{ts()}] Reconciling initial scan state...")
+reconcile()
 
 print(f"[{ts()}] Scheduler running. Waiting for scheduled times... (Ctrl+C to stop)")
 try:
