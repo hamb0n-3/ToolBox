@@ -38,7 +38,7 @@ ll() { command ls --color -lah -- "$@"; }  # [files listing]
 comparelists() { grep -Fvx -f "$2" -- "$1"; }  # [files diff compare]
 tjp() { [ -n "$ZSH_VERSION" ] && . "$HOME/.zshrc"; [ -f "$TOOLBOX/.kali" ] && . "$TOOLBOX/.kali" && . "$HOME/.env"; }  # [shell reload]
 toolbox() { cd "$TOOLBOX" || return; }  # [nav repo]
-vt_scan() {python "$TOOLBOX"/releases/system/vt_scan/vt_scan.py --format md "$1"}
+vt_scan() {python "$TOOLBOX"/releases/system/vt_scan/ --format md "$1"}
 source_venv() {source ~/.venv/bin/activate} # pip 
 CodeVault() {
   eval "$(ssh-agent)" && ssh-add "$GITHUB_KEY" || return 1
