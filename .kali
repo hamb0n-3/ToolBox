@@ -49,15 +49,16 @@ CodeVault() {
   git add . && git commit -m "${1:-.}" ; git push
   cd -
 }
-# Symlink ./src in a ToolBox dir -> the matching source dir under $CODEVAULT.
+# Symlink ./src (in the CURRENT dir) -> the matching source dir under $CODEVAULT.
 # Match is by leaf folder name (basename), so intermediate paths need not line up.
-#   linksrc                 # match $PWD's name under $CODEVAULT (prompts if >1 hit)
-#   linksrc cryptor         # match a name explicitly (link is still made in $PWD)
-#   linksrc . <target>      # skip the search: link ./src -> <target> directly
+# Case-insensitive. The link is always created in $PWD.
+#   linksrc                 # search $CODEVAULT for $PWD's name (prompts if >1 hit)
+#   linksrc cryptor         # search for a name explicitly
+#   linksrc cryptor <target># skip the search: link ./src -> <target> directly
 linksrc() {
   local dir name target
-  dir="$(cd "${1:-$PWD}" 2>/dev/null && pwd)" || { echo "linksrc: no such dir: ${1:-$PWD}" >&2; return 1; }
-  name="$(basename "$dir")"
+  dir="$PWD"
+  name="${1:-$(basename "$dir")}"
 
   if [ -n "$2" ]; then                       # explicit target wins, no search
     target="$(cd "$2" 2>/dev/null && pwd)" || { echo "linksrc: no such target: $2" >&2; return 1; }
