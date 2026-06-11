@@ -77,7 +77,7 @@ linksrc() {
     esac
   fi
 
-  ln -sfn "$target" "$dir/src" && echo "linked $dir/src -> $target"
+  ln -sfnr "$target" "$dir/src" && echo "linked $dir/src -> $(readlink "$dir/src")"
 }  # [link src codevault toolbox symlink]
 
 pybin() {
