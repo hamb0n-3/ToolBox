@@ -49,21 +49,32 @@ CodeVault() {
   git add . && git commit -m "${1:-.}" ; git push
   cd -
 }
-# Symlink $TOOLBOX/<rel>/src -> $CODEVAULT/<rel> (mirrors the path under ToolBox into CodeVault).
-# Run from inside the ToolBox dir, or pass it as an arg:  linksrc            (uses $PWD)
-#                                                          linksrc some/path/cryptor
+# Symlink ./src in a ToolBox dir -> the matching source dir under $CODEVAULT.
+# Match is by leaf folder name (basename), so intermediate paths need not line up.
+#   linksrc                 # match $PWD's name under $CODEVAULT (prompts if >1 hit)
+#   linksrc cryptor         # match a name explicitly (link is still made in $PWD)
+#   linksrc . <target>      # skip the search: link ./src -> <target> directly
 linksrc() {
-  local dir
+  local dir name target
   dir="$(cd "${1:-$PWD}" 2>/dev/null && pwd)" || { echo "linksrc: no such dir: ${1:-$PWD}" >&2; return 1; }
+  name="$(basename "$dir")"
 
-  case "$dir" in
-    "$TOOLBOX"/*) ;;
-    *) echo "linksrc: '$dir' is not under \$TOOLBOX ($TOOLBOX)" >&2; return 1 ;;
-  esac
-
-  local rel="${dir#"$TOOLBOX"/}" target
-  target="$CODEVAULT/$rel"
-  [ -d "$target" ] || { echo "linksrc: source not found: $target" >&2; return 1; }
+  if [ -n "$2" ]; then                       # explicit target wins, no search
+    target="$(cd "$2" 2>/dev/null && pwd)" || { echo "linksrc: no such target: $2" >&2; return 1; }
+  else
+    local IFS=$'\n' matches
+    matches=($(find "$CODEVAULT" -name .git -prune -o -type d -name "$name" -print 2>/dev/null))
+    case ${#matches[@]} in
+      0) echo "linksrc: no dir named '$name' under \$CODEVAULT ($CODEVAULT)" >&2; return 1 ;;
+      1) target="${matches[*]}" ;;           # sole hit (index-agnostic across sh/zsh)
+      *) echo "linksrc: '$name' matches multiple dirs under \$CODEVAULT:" >&2
+         local i=1 m
+         for m in "${matches[@]}"; do printf '  [%d] %s\n' "$i" "$m" >&2; i=$((i+1)); done
+         printf 'pick #: ' >&2; local n; read n
+         target="${matches[$n]}"
+         [ -n "$target" ] || { echo "linksrc: invalid choice" >&2; return 1; } ;;
+    esac
+  fi
 
   ln -sfn "$target" "$dir/src" && echo "linked $dir/src -> $target"
 }  # [link src codevault toolbox symlink]
