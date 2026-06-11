@@ -49,6 +49,25 @@ CodeVault() {
   git add . && git commit -m "${1:-.}" ; git push
   cd -
 }
+# Symlink $TOOLBOX/<rel>/src -> $CODEVAULT/<rel> (mirrors the path under ToolBox into CodeVault).
+# Run from inside the ToolBox dir, or pass it as an arg:  linksrc            (uses $PWD)
+#                                                          linksrc some/path/cryptor
+linksrc() {
+  local dir
+  dir="$(cd "${1:-$PWD}" 2>/dev/null && pwd)" || { echo "linksrc: no such dir: ${1:-$PWD}" >&2; return 1; }
+
+  case "$dir" in
+    "$TOOLBOX"/*) ;;
+    *) echo "linksrc: '$dir' is not under \$TOOLBOX ($TOOLBOX)" >&2; return 1 ;;
+  esac
+
+  local rel="${dir#"$TOOLBOX"/}" target
+  target="$CODEVAULT/$rel"
+  [ -d "$target" ] || { echo "linksrc: source not found: $target" >&2; return 1; }
+
+  ln -sfn "$target" "$dir/src" && echo "linked $dir/src -> $target"
+}  # [link src codevault toolbox symlink]
+
 pybin() {
   case "$1" in
     --docker|--portable) shift; "$(dirname "$PYBIN")/build-in-docker.sh" "$@" ;;  # portable glibc>=2.28 onefile via Docker
