@@ -63,7 +63,7 @@ linksrc() {
     target="$(cd "$2" 2>/dev/null && pwd)" || { echo "linksrc: no such target: $2" >&2; return 1; }
   else
     local IFS=$'\n' matches
-    matches=($(find "$CODEVAULT" -name .git -prune -o -type d -name "$name" -print 2>/dev/null))
+    matches=($(find "$CODEVAULT" -name .git -prune -o -type d -iname "$name" -print 2>/dev/null))
     case ${#matches[@]} in
       0) echo "linksrc: no dir named '$name' under \$CODEVAULT ($CODEVAULT)" >&2; return 1 ;;
       1) target="${matches[*]}" ;;           # sole hit (index-agnostic across sh/zsh)
