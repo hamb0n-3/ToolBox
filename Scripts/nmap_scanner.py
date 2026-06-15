@@ -691,7 +691,8 @@ def main():
 
     output_dir = Path(state.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    (output_dir / "ServiceScans").mkdir(parents=True, exist_ok=True)
+    if custom_args is None:
+        (output_dir / "ServiceScans").mkdir(parents=True, exist_ok=True)
 
     total = len(state.targets)
     completed_set = set(state.completed)
