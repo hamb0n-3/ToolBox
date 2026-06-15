@@ -357,7 +357,7 @@ def service_scan_host(host, ports, output_dir):
                     f.write(content)
 
 
-def custom_scan_host(host, custom_args, output_dir):
+def custom_scan_host(host, custom_args, output_dir, seen_cache=None):
     """Run a user-supplied nmap scan on one host, replacing both the discovery
     and service stages with a single scan that does double duty: open ports
     parsed from its greppable output populate OpenPorts/[PORT]/hosts.md (the
@@ -391,7 +391,7 @@ def custom_scan_host(host, custom_args, output_dir):
         ports = parse_open_ports(gnmap.read_text()) if gnmap.exists() else []
         if ports:
             print(f"    open: {', '.join(str(p) for p in ports)}")
-            update_open_ports(host, ports, custom_dir)
+            update_open_ports(host, ports, custom_dir, seen_cache)
         else:
             print(f"    no open ports")
 
