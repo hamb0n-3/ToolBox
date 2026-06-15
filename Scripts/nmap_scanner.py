@@ -278,18 +278,32 @@ def discovery_scan_host(host):
     return parse_open_ports(stdout)
 
 
-def update_open_ports(host, ports, output_dir):
-    """Append host to OpenPorts/[PORT]/hosts.md — one file per open port."""
+def update_open_ports(host, ports, output_dir, seen_cache=None):
+    """Append host to OpenPorts/[PORT]/hosts.md — one file per open port.
+
+    seen_cache, if given, maps each hosts.md path to the set of hosts already
+    recorded in it, so a long run dedupes against an in-memory set rather than
+    re-reading the (growing) file on every host. The file is read at most once
+    per port per process and seeded lazily, so resume still dedupes against
+    hosts written in earlier runs."""
     for p in ports:
         port_dir = output_dir / "OpenPorts" / str(p)
         port_dir.mkdir(parents=True, exist_ok=True)
         hosts_file = port_dir / "hosts.md"
-        existing = set()
-        if hosts_file.exists():
-            existing = {l.strip() for l in hosts_file.read_text().splitlines() if l.strip()}
+
+        if seen_cache is not None and hosts_file in seen_cache:
+            existing = seen_cache[hosts_file]
+        else:
+            existing = set()
+            if hosts_file.exists():
+                existing = {l.strip() for l in hosts_file.read_text().splitlines() if l.strip()}
+            if seen_cache is not None:
+                seen_cache[hosts_file] = existing
+
         if host not in existing:
             with open(hosts_file, "a") as f:
                 f.write(f"{host}\n")
+            existing.add(host)  # keep the cached set in sync with the file
 
 
 def service_scan_host(host, ports, output_dir):
