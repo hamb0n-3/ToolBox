@@ -3,12 +3,8 @@
 An nmap wrapper with per-host logging, pause/resume, batched scanning, a
 scheduled start/daily window, and a time limit.
 
-> Only run this against hosts you are authorized to scan.
-
 ## Requirements
 
-- `nmap` on your `PATH`
-- Python 3
 - `apscheduler` — only needed for `--window` (`pip install apscheduler`)
 
 ## How it works
