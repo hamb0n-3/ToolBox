@@ -754,6 +754,9 @@ def main():
 
     total = len(state.targets)
     completed_set = set(state.completed)
+    # In-memory dedup cache for OpenPorts/[PORT]/hosts.md, so update_open_ports
+    # reads each port file at most once per process instead of on every host.
+    open_ports_seen = {}
     # Index-based loop (not enumerate) so that if the scan window closes partway
     # through a host we can wait and then redo that same host, rather than
     # skipping it. A user pause/kill takes the exit path (break) instead.
@@ -774,7 +777,7 @@ def main():
             # --custom: skip discovery + service entirely, run the user's scan.
             print(f"\n[{idx + 1}/{total}] {host}: custom scan...")
             try:
-                custom_scan_host(host, custom_args, output_dir)
+                custom_scan_host(host, custom_args, output_dir, open_ports_seen)
             except Exception as e:
                 print(f"    [!] custom scan error: {e}")
                 idx += 1  # genuine error — skip this run; resume retries it
@@ -798,7 +801,7 @@ def main():
 
             if ports:
                 print(f"    open: {', '.join(str(p) for p in ports)}")
-                update_open_ports(host, ports, output_dir)
+                update_open_ports(host, ports, output_dir, open_ports_seen)
                 print(f"[{idx + 1}/{total}] {host}: service scan on {len(ports)} port(s)...")
                 try:
                     service_scan_host(host, ports, output_dir)
