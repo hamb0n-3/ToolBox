@@ -665,13 +665,14 @@ def main():
     args = ap.parse_args()
 
     # Parse the custom nmap args up front so a bad quote fails before any scan.
-    custom_args = None
+    # The effective mode is resolved from state below (so resume reuses it).
+    cli_custom_args = None
     if args.custom is not None:
         try:
-            custom_args = shlex.split(args.custom)
+            cli_custom_args = shlex.split(args.custom)
         except ValueError as e:
             ap.error(f"could not parse --custom args: {e}")
-        if not custom_args:
+        if not cli_custom_args:
             ap.error("--custom was given no nmap arguments")
 
     check_nmap()
@@ -680,6 +681,10 @@ def main():
     if args.resume is not None:
         if args.targets or args.input_file:
             sys.stderr.write("[!] --resume cannot be combined with targets or -iL\n")
+            sys.exit(2)
+        if args.custom is not None:
+            sys.stderr.write("[!] --custom cannot be combined with --resume "
+                             "(the scan mode is restored from saved state)\n")
             sys.exit(2)
         try:
             state = ScanState.load(args.resume)
@@ -720,6 +725,7 @@ def main():
         raw_targets = normalize_targets(raw_targets)
 
         state = ScanState()
+        state.custom_args = cli_custom_args
         print(f"[*] Expanding {len(raw_targets)} target spec(s)...")
         state.targets = expand_targets(raw_targets)
         print(f"[*] {len(state.targets)} hosts to scan.")
@@ -731,6 +737,12 @@ def main():
     if args.output_dir is not None:
         state.output_dir = args.output_dir
         state.save()
+
+    # Effective scan mode comes from state: set from --custom on a fresh run,
+    # restored from the state file on resume.
+    custom_args = state.custom_args
+    if custom_args is not None:
+        print(f"[*] Custom scan: nmap {' '.join(custom_args)}")
 
     # --- scheduled start ---
     if args.start is not None:
