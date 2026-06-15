@@ -365,17 +365,20 @@ def custom_scan_host(host, custom_args, output_dir):
         if _halt_work():
             return
 
+        # Everything from a custom scan is self-contained under CustomScans/,
+        # including its OpenPorts/ tree, to keep it separate from a normal
+        # discovery+service run's top-level OpenPorts/.
+        custom_dir = output_dir / "CustomScans"
+        custom_dir.mkdir(parents=True, exist_ok=True)
+
         # Discovery role: pull open ports from the greppable output.
         gnmap = Path(prefix + ".gnmap")
         ports = parse_open_ports(gnmap.read_text()) if gnmap.exists() else []
         if ports:
             print(f"    open: {', '.join(str(p) for p in ports)}")
-            update_open_ports(host, ports, output_dir)
+            update_open_ports(host, ports, custom_dir)
         else:
             print(f"    no open ports")
-
-        custom_dir = output_dir / "CustomScans"
-        custom_dir.mkdir(parents=True, exist_ok=True)
 
         for ext in (".nmap", ".gnmap"):
             src = Path(prefix + ext)
@@ -391,7 +394,7 @@ def custom_scan_host(host, custom_args, output_dir):
 
             # Service role: a copy under every port this host had open.
             for p in ports:
-                port_file = output_dir / "OpenPorts" / str(p) / f"service_scans{ext}"
+                port_file = custom_dir / "OpenPorts" / str(p) / f"service_scans{ext}"
                 with open(port_file, "a") as f:
                     f.write(content)
 
