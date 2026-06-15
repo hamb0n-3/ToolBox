@@ -628,11 +628,11 @@ def main():
                          "pauses outside it and resumes when it reopens. e.g. "
                          "17:00-07:00 scans 5pm-7am. Requires APScheduler.")
     ap.add_argument("--custom", metavar="ARGS",
-                    help="skip the discovery and service scans; instead run nmap "
-                         "with these args on each host (quote them, e.g. "
-                         "--custom '-sU -p 53,161 -T4'). Per-host output is "
-                         "aggregated into CustomScans/ instead of OpenPorts/ "
-                         "and ServiceScans/.")
+                    help="skip the discovery and service scans; instead run a "
+                         "single nmap scan with these args on each host (quote "
+                         "them, e.g. --custom '-sU -p 53,161 -T4'). It doubles "
+                         "as discovery+service: open ports still populate "
+                         "OpenPorts/, and output is aggregated into CustomScans/.")
     args = ap.parse_args()
 
     # Parse the custom nmap args up front so a bad quote fails before any scan.
