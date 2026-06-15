@@ -278,6 +278,37 @@ def discovery_scan_host(host):
     return parse_open_ports(stdout)
 
 
+def parse_discovery_batch(grep_output):
+    """Map every host nmap reported in greppable output to its open ports
+    ([] if none). A host appears as a key iff nmap emitted a 'Host:' line for
+    it, so the caller can tell 'scanned, nothing open' (present with []) from
+    'never reported' (absent — e.g. a target token nmap echoed differently)."""
+    result = {}
+    for line in grep_output.splitlines():
+        m = re.search(r"Host:\s+(\S+)", line)
+        if not m:
+            continue
+        host = m.group(1)
+        ports = parse_open_ports(line) if "Ports:" in line else []
+        if host in result:
+            result[host].extend(p for p in ports if p not in result[host])
+            result[host].sort()
+        else:
+            result[host] = ports
+    return result
+
+
+def discovery_scan_batch(hosts):
+    """Full-port discovery on a batch of hosts in a single nmap invocation, so
+    nmap parallelizes across the whole group instead of one host at a time.
+    Returns {host: [open ports]} for every host nmap reported; {} if halted."""
+    cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", "-"] + list(hosts)
+    _, stdout, _ = run_nmap(cmd)
+    if _halt_work():
+        return {}
+    return parse_discovery_batch(stdout)
+
+
 def update_open_ports(host, ports, output_dir, seen_cache=None):
     """Append host to OpenPorts/[PORT]/hosts.md — one file per open port.
 
@@ -684,6 +715,11 @@ def main():
                     help="only scan inside this daily window, every day (Mon-Sun); "
                          "pauses outside it and resumes when it reopens. e.g. "
                          "17:00-07:00 scans 5pm-7am. Requires APScheduler.")
+    ap.add_argument("--batch-size", metavar="N", type=int, default=16,
+                    help="number of hosts to run full-port discovery on per nmap "
+                         "invocation, so nmap parallelizes across them (default: "
+                         "16). Service scans still run per host (each needs its "
+                         "own open-port set); --custom is unaffected (per host).")
     ap.add_argument("--custom", metavar="ARGS",
                     help="skip the discovery and service scans; instead run a "
                          "single nmap scan with these args on each host (quote "
@@ -691,6 +727,9 @@ def main():
                          "as discovery+service: all output is self-contained "
                          "under CustomScans/, including CustomScans/OpenPorts/.")
     args = ap.parse_args()
+
+    if args.batch_size < 1:
+        ap.error("--batch-size must be at least 1")
 
     # Parse the custom nmap args up front so a bad quote fails before any scan.
     # The effective mode is resolved from state below (so resume reuses it).
