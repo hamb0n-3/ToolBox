@@ -389,82 +389,22 @@ def service_scan_host(host, ports, output_dir):
                     f.write(content)
 
 
-def custom_scan_host(host, custom_args, output_dir, seen_cache=None):
-    """Run a user-supplied nmap scan on a SINGLE host, replacing both the
-    discovery and service stages: open ports parsed from its greppable output
-    populate OpenPorts/[PORT]/hosts.md (the discovery role), and the scan output
-    is recorded per open port and in an aggregate file (the service role).
-
-    This is the per-host fallback used when a batched custom scan
-    (custom_scan_batch) doesn't report a host. The batch path is the normal
-    route; this one additionally writes the per-port service_scans.* copies that
-    the batch path cannot (one combined file can't be attributed per host).
-
-    custom_args is the already-split list of nmap arguments (from --custom).
-    Output is written to a scratch tempdir via -oA and, on success, aggregated
-    into CustomScans/all_hosts.{nmap,gnmap} plus OpenPorts/[PORT]/* — mirroring
-    how service_scan_host aggregates, so a paused/failed scan leaves the
-    combined files untouched and resume redoes the host cleanly."""
-    with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
-        # Plain string prefix + explicit extension, same reasoning as the
-        # service scan: Path.with_suffix would mangle IP/hostname "extensions".
-        # -oA always writes a .gnmap regardless of the user's args, so we can
-        # extract open ports from it.
-        prefix = str(Path(tmp) / "scan")
-        cmd = [NMAP_BIN] + custom_args + ["-oA", prefix, host]
-        run_nmap(cmd)
-        if _halt_work():
-            return
-
-        # Everything from a custom scan is self-contained under CustomScans/,
-        # including its OpenPorts/ tree, to keep it separate from a normal
-        # discovery+service run's top-level OpenPorts/.
-        custom_dir = output_dir / "CustomScans"
-        custom_dir.mkdir(parents=True, exist_ok=True)
-
-        # Discovery role: pull open ports from the greppable output.
-        gnmap = Path(prefix + ".gnmap")
-        ports = parse_open_ports(gnmap.read_text()) if gnmap.exists() else []
-        if ports:
-            print(f"    open: {', '.join(str(p) for p in ports)}")
-            update_open_ports(host, ports, custom_dir, seen_cache)
-        else:
-            print(f"    no open ports")
-
-        for ext in (".nmap", ".gnmap"):
-            src = Path(prefix + ext)
-            if not src.exists():
-                continue
-            content = src.read_text()
-            if not content.endswith("\n"):
-                content += "\n"
-
-            # Aggregate across all hosts.
-            with open(custom_dir / f"all_hosts{ext}", "a") as f:
-                f.write(content)
-
-            # Service role: a copy under every port this host had open.
-            for p in ports:
-                port_file = custom_dir / "OpenPorts" / str(p) / f"service_scans{ext}"
-                with open(port_file, "a") as f:
-                    f.write(content)
-
-
 def custom_scan_batch(hosts, custom_args, output_dir, seen_cache=None):
     """Run the user's custom nmap scan on a batch of hosts in ONE invocation so
     nmap parallelizes across them. The combined output is appended to
     CustomScans/all_hosts.{nmap,gnmap}, and open ports parsed per host populate
     CustomScans/OpenPorts/[PORT]/hosts.md (the discovery role).
 
-    Unlike custom_scan_host, this does NOT write the per-port service_scans.*
-    copies: a single batched invocation yields one combined output file that
-    can't be cleanly attributed to an individual host/port, so the per-port
-    scan output lives only in all_hosts.* here. Aggregation happens only after
-    nmap completes (an empty dict signals a halted run, so resume redoes the
-    batch cleanly).
+    This does NOT write per-port service_scans.* copies: a single batched
+    invocation yields one combined output file that can't be cleanly attributed
+    to an individual host/port, so the per-port scan output lives only in
+    all_hosts.* here. Aggregation happens only after nmap completes (an empty
+    dict signals a halted run, so resume redoes the batch cleanly).
 
-    Returns {host: [open ports]} for every host nmap reported, so the caller
-    knows which hosts the batch covered (the rest fall back to custom_scan_host).
+    Returns {host: [open ports]} for every host nmap reported. The invocation
+    scans every host in `hosts`; a host absent from the result was scanned but
+    reported nothing open (e.g. down without -Pn), so the caller marks it done
+    rather than re-scanning it.
     """
     with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
         # Plain string prefix + explicit extension, same reasoning as the
@@ -780,7 +720,8 @@ def main():
                          "53,161 -T4'), batched per --batch-size. Output is "
                          "self-contained under CustomScans/: combined scans in "
                          "all_hosts.*, open ports in CustomScans/OpenPorts/. "
-                         "Include -Pn to keep down hosts in the batch.")
+                         "Add -Pn to scan hosts that don't answer ping discovery "
+                         "(otherwise they're recorded as down with nothing open).")
     args = ap.parse_args()
 
     if args.batch_size < 1:
