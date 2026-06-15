@@ -903,12 +903,13 @@ def main():
     # In-memory dedup cache for OpenPorts/[PORT]/hosts.md, so update_open_ports
     # reads each port file at most once per process instead of on every host.
     open_ports_seen = {}
-    # Hosts are processed in batches: full-port discovery runs once per batch
-    # (so nmap parallelizes across the group), then service scans run per host.
-    # Custom scans run per host. idx is the scan cursor over state.targets;
-    # already-completed hosts are skipped when building each batch. idx only
-    # advances past a batch once it finishes — a window pause mid-batch redoes
-    # the unfinished hosts (completed ones are skipped); a user pause exits.
+    # Hosts are processed in batches, one nmap invocation per batch so nmap
+    # parallelizes across the group. Normal mode: batched full-port discovery,
+    # then service scans per host. Custom mode: the whole custom scan runs
+    # batched. idx is the scan cursor over state.targets; already-completed
+    # hosts are skipped when building each batch. idx only advances past a batch
+    # once it finishes — a window pause mid-batch redoes the unfinished hosts
+    # (completed ones are skipped); a user pause exits.
     idx = 0
     while idx < total:
         # Build the next batch of up to batch_size not-yet-completed hosts.
@@ -929,42 +930,55 @@ def main():
         if _pause_requested:
             break
 
-        host_ports = None
-        if custom_args is None:
-            # One batched full-port discovery for the whole group.
-            print(f"\n[{len(state.completed)}/{total} done] "
-                  f"discovery scan on {len(batch)} host(s)...")
-            try:
+        # One batched nmap invocation for the whole group. Both modes return a
+        # {host: [open ports]} map of the hosts nmap actually reported.
+        label = "custom scan" if custom_args is not None else "discovery scan"
+        print(f"\n[{len(state.completed)}/{total} done] {label} on {len(batch)} host(s)...")
+        try:
+            if custom_args is not None:
+                host_ports = custom_scan_batch(batch, custom_args, output_dir, open_ports_seen)
+            else:
                 host_ports = discovery_scan_batch(batch)
-            except Exception as e:
-                print(f"    [!] discovery error: {e}")
-                idx = batch_end  # skip this batch this run; resume retries it
-                continue
-            if _window_paused:
-                continue  # window closed mid-scan — redo batch once it reopens
-            if _pause_requested:
-                break
+        except Exception as e:
+            print(f"    [!] {label} error: {e}")
+            idx = batch_end  # skip this batch this run; resume retries it
+            continue
+        if _window_paused:
+            continue  # window closed mid-scan — redo batch once it reopens
+        if _pause_requested:
+            break
 
-        # Per-host stage: service scan (normal) or the whole custom scan.
-        interrupted = False  # window/pause stopped us mid-batch
+        # Per-host stage: service scan (normal) or just record/mark (custom,
+        # whose output the batch already wrote). idx advances only if this
+        # completes without a window/user interrupt.
+        interrupted = False
         for host in batch:
             if _halt_work():  # pause/window arrived between hosts
                 interrupted = True
                 break
 
+            ports = host_ports.get(host)
+
             if custom_args is not None:
-                print(f"\n[{len(state.completed) + 1}/{total}] {host}: custom scan...")
-                try:
-                    custom_scan_host(host, custom_args, output_dir, open_ports_seen)
-                except Exception as e:
-                    print(f"    [!] custom scan error: {e}")
-                    continue  # skip this host this run; resume retries it
-            else:
-                ports = host_ports.get(host)
                 if ports is None:
-                    # nmap didn't report this token in the batch (rare, e.g. a
-                    # hostname echoed differently) — fall back to a single scan
-                    # so a live host is never silently skipped.
+                    # nmap didn't report this token in the batch (e.g. a host
+                    # down with no -Pn, or a token it echoed differently) — fall
+                    # back to a single custom scan so a host is never silently
+                    # skipped. This is also the only path that writes per-port
+                    # service_scans.* copies.
+                    print(f"[{len(state.completed) + 1}/{total}] {host}: custom scan (single)...")
+                    try:
+                        custom_scan_host(host, custom_args, output_dir, open_ports_seen)
+                    except Exception as e:
+                        print(f"    [!] custom scan error: {e}")
+                        continue  # skip this host this run; resume retries it
+                else:
+                    summary = (f"open {', '.join(str(p) for p in ports)}"
+                               if ports else "no open ports")
+                    print(f"[{len(state.completed) + 1}/{total}] {host}: custom scan — {summary}")
+            else:
+                if ports is None:
+                    # Same fallback for normal discovery: single full-port scan.
                     try:
                         ports = discovery_scan_host(host)
                     except Exception as e:
