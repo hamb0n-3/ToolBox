@@ -420,6 +420,12 @@ class ScanState:
     def __init__(self, pid=None):
         self.pid = pid if pid is not None else os.getpid()
         self.state_file = STATE_DIR / f"nmap_wrapper_state_{self.pid}.json"
+        # Append-only companion log of completed hosts (one per line). Per-host
+        # checkpointing appends a single line here instead of rewriting the whole
+        # JSON (which would be O(n) per host → O(n^2) over a large run). The JSON
+        # holds the immutable run config; completed hosts are reconstructed by
+        # unioning JSON + this log on load.
+        self.done_file = STATE_DIR / f"nmap_wrapper_state_{self.pid}.done"
         self.targets = []
         self.completed = []
         self.output_dir = str(OUTPUT_BASE)
