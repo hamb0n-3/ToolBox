@@ -686,6 +686,14 @@ def start_window_scheduler(window):
 # --------------------- main ---------------------
 
 def main():
+    # Force line-buffered stdout so progress lines appear immediately even when
+    # output is piped or redirected (otherwise Python block-buffers a non-TTY
+    # stdout and the long, silent discovery scans look like a hang).
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except (AttributeError, ValueError):
+        pass  # not a regular text stream (e.g. already wrapped) — nothing to do
+
     ap = argparse.ArgumentParser(
         description="nmap wrapper: per-host logs, pause/resume, scheduled start, time limit.",
     )
