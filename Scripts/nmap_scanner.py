@@ -13,6 +13,7 @@ Usage:
     ./nmap_wrapper.py 10.0.0.0/24 --start 14:46         # wait until 14:46
     ./nmap_wrapper.py 10.0.0.0/24 --window 17:00-07:00  # scan 5pm-7am daily, idle otherwise
     ./nmap_wrapper.py 10.0.0.0/24 --custom '-sU -p 53,161 -T4'  # skip discovery/service, run this instead
+    ./nmap_wrapper.py 10.0.0.0/24 -o /data/scans        # write output to a custom directory
     ./nmap_wrapper.py --resume 12345                    # resume by old PID
 
 Only run this against hosts you are authorized to scan.
@@ -619,6 +620,9 @@ def main():
                          "IP-IP (10.0.0.1-10.0.0.50), and comma-separated")
     ap.add_argument("-iL", dest="input_file", metavar="FILE",
                     help="read targets from a file (one per line, # comments ok)")
+    ap.add_argument("-o", "--output-dir", metavar="DIR",
+                    help=f"directory to write scan output into "
+                         f"(default: {OUTPUT_BASE})")
     ap.add_argument("--resume", metavar="PID|FILE",
                     help="resume a paused scan by its original PID or by the "
                          "path to its state json file")
@@ -634,8 +638,8 @@ def main():
                     help="skip the discovery and service scans; instead run a "
                          "single nmap scan with these args on each host (quote "
                          "them, e.g. --custom '-sU -p 53,161 -T4'). It doubles "
-                         "as discovery+service: open ports still populate "
-                         "OpenPorts/, and output is aggregated into CustomScans/.")
+                         "as discovery+service: all output is self-contained "
+                         "under CustomScans/, including CustomScans/OpenPorts/.")
     args = ap.parse_args()
 
     # Parse the custom nmap args up front so a bad quote fails before any scan.
@@ -697,6 +701,13 @@ def main():
         print(f"[*] Expanding {len(raw_targets)} target spec(s)...")
         state.targets = expand_targets(raw_targets)
         print(f"[*] {len(state.targets)} hosts to scan.")
+        state.save()
+
+    # Override the output directory if requested. Applies to fresh runs and
+    # resumes; on resume this redirects only the not-yet-scanned hosts, leaving
+    # already-collected output in the original location.
+    if args.output_dir is not None:
+        state.output_dir = args.output_dir
         state.save()
 
     # --- scheduled start ---
