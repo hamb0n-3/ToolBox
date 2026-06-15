@@ -250,14 +250,11 @@ def expand_targets(targets):
     return ips
 
 
-def discovery_scan_host(host):
-    """Full-port discovery on one host. Returns sorted list of open ports."""
-    cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", "-", host]
-    _, stdout, _ = run_nmap(cmd)
-    if _halt_work():
-        return []
+def parse_open_ports(grep_output):
+    """Extract sorted, unique open port numbers from nmap greppable output
+    (`-oG -` or a .gnmap file)."""
     ports = []
-    for line in stdout.splitlines():
+    for line in grep_output.splitlines():
         if "Ports:" not in line:
             continue
         section = line.split("Ports:", 1)[1]
@@ -269,6 +266,15 @@ def discovery_scan_host(host):
                 except ValueError:
                     pass
     return sorted(set(ports))
+
+
+def discovery_scan_host(host):
+    """Full-port discovery on one host. Returns sorted list of open ports."""
+    cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", "-", host]
+    _, stdout, _ = run_nmap(cmd)
+    if _halt_work():
+        return []
+    return parse_open_ports(stdout)
 
 
 def update_open_ports(host, ports, output_dir):
@@ -337,20 +343,36 @@ def service_scan_host(host, ports, output_dir):
 
 
 def custom_scan_host(host, custom_args, output_dir):
-    """Run a user-supplied nmap scan on one host, bypassing the discovery and
-    service stages entirely. custom_args is the already-split list of nmap
-    arguments (from --custom). Output is written to a scratch tempdir via -oA
-    and, on success, appended to CustomScans/all_hosts.{nmap,gnmap} — mirroring
+    """Run a user-supplied nmap scan on one host, replacing both the discovery
+    and service stages with a single scan that does double duty: open ports
+    parsed from its greppable output populate OpenPorts/[PORT]/hosts.md (the
+    discovery role), and the scan output is recorded per open port and in an
+    aggregate file (the service role).
+
+    custom_args is the already-split list of nmap arguments (from --custom).
+    Output is written to a scratch tempdir via -oA and, on success, aggregated
+    into CustomScans/all_hosts.{nmap,gnmap} plus OpenPorts/[PORT]/* — mirroring
     how service_scan_host aggregates, so a paused/failed scan leaves the
     combined files untouched and resume redoes the host cleanly."""
     with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
         # Plain string prefix + explicit extension, same reasoning as the
         # service scan: Path.with_suffix would mangle IP/hostname "extensions".
+        # -oA always writes a .gnmap regardless of the user's args, so we can
+        # extract open ports from it.
         prefix = str(Path(tmp) / "scan")
         cmd = [NMAP_BIN] + custom_args + ["-oA", prefix, host]
         run_nmap(cmd)
         if _halt_work():
             return
+
+        # Discovery role: pull open ports from the greppable output.
+        gnmap = Path(prefix + ".gnmap")
+        ports = parse_open_ports(gnmap.read_text()) if gnmap.exists() else []
+        if ports:
+            print(f"    open: {', '.join(str(p) for p in ports)}")
+            update_open_ports(host, ports, output_dir)
+        else:
+            print(f"    no open ports")
 
         custom_dir = output_dir / "CustomScans"
         custom_dir.mkdir(parents=True, exist_ok=True)
@@ -362,8 +384,16 @@ def custom_scan_host(host, custom_args, output_dir):
             content = src.read_text()
             if not content.endswith("\n"):
                 content += "\n"
+
+            # Aggregate across all hosts.
             with open(custom_dir / f"all_hosts{ext}", "a") as f:
                 f.write(content)
+
+            # Service role: a copy under every port this host had open.
+            for p in ports:
+                port_file = output_dir / "OpenPorts" / str(p) / f"service_scans{ext}"
+                with open(port_file, "a") as f:
+                    f.write(content)
 
 
 # --------------------- state (for pause/resume) ---------------------
