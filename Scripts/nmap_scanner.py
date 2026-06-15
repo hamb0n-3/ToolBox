@@ -14,6 +14,7 @@ Usage:
     ./nmap_wrapper.py 10.0.0.0/24 --window 17:00-07:00  # scan 5pm-7am daily, idle otherwise
     ./nmap_wrapper.py 10.0.0.0/24 --custom '-sU -p 53,161 -T4'  # skip discovery/service, run this instead
     ./nmap_wrapper.py 10.0.0.0/24 -o /data/scans        # write output to a custom directory
+    ./nmap_wrapper.py 10.0.0.0/24 --batch-size 32       # discover 32 hosts per nmap invocation
     ./nmap_wrapper.py --resume 12345                    # resume by old PID
 
 Only run this against hosts you are authorized to scan.
