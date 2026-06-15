@@ -423,6 +423,10 @@ class ScanState:
         self.targets = []
         self.completed = []
         self.output_dir = str(OUTPUT_BASE)
+        # Scan mode: None for a normal discovery+service run, or the list of
+        # custom nmap args (from --custom). Persisted so --resume reuses the
+        # original mode instead of relying on the flag being re-passed.
+        self.custom_args = None
         # Wall-clock the run began (epoch + ISO). Set once at creation and
         # carried across resumes so elapsed time reflects the original start.
         self.started_at = time.time()
@@ -435,6 +439,7 @@ class ScanState:
             "targets": self.targets,
             "completed": self.completed,
             "output_dir": self.output_dir,
+            "custom_args": self.custom_args,
             "started_at": self.started_at,
             "started_at_iso": datetime.fromtimestamp(self.started_at).isoformat(timespec="seconds"),
             "paused_at": self.paused_at,
@@ -476,6 +481,9 @@ class ScanState:
         s.targets = data["targets"]
         s.completed = data["completed"]
         s.output_dir = data["output_dir"]
+        # Restore the scan mode; absent (None) for normal runs and for state
+        # files written before this field existed.
+        s.custom_args = data.get("custom_args")
         # Preserve the original start time across resumes; fall back to now for
         # state files written before this field existed.
         s.started_at = data.get("started_at", time.time())
