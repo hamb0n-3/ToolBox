@@ -770,16 +770,17 @@ def main():
                          "pauses outside it and resumes when it reopens. e.g. "
                          "17:00-07:00 scans 5pm-7am. Requires APScheduler.")
     ap.add_argument("--batch-size", metavar="N", type=int, default=16,
-                    help="number of hosts to run full-port discovery on per nmap "
-                         "invocation, so nmap parallelizes across them (default: "
-                         "16). Service scans still run per host (each needs its "
-                         "own open-port set); --custom is unaffected (per host).")
+                    help="hosts per nmap invocation, so nmap parallelizes across "
+                         "them (default: 16). Applies to discovery and to "
+                         "--custom scans. Normal-mode service scans still run "
+                         "per host (each needs its own open-port set).")
     ap.add_argument("--custom", metavar="ARGS",
-                    help="skip the discovery and service scans; instead run a "
-                         "single nmap scan with these args on each host (quote "
-                         "them, e.g. --custom '-sU -p 53,161 -T4'). It doubles "
-                         "as discovery+service: all output is self-contained "
-                         "under CustomScans/, including CustomScans/OpenPorts/.")
+                    help="skip the discovery and service scans; instead run nmap "
+                         "with these args (quote them, e.g. --custom '-sU -p "
+                         "53,161 -T4'), batched per --batch-size. Output is "
+                         "self-contained under CustomScans/: combined scans in "
+                         "all_hosts.*, open ports in CustomScans/OpenPorts/. "
+                         "Include -Pn to keep down hosts in the batch.")
     args = ap.parse_args()
 
     if args.batch_size < 1:
