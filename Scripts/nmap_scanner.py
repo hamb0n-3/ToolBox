@@ -454,6 +454,14 @@ class ScanState:
             "elapsed_seconds": round((self.paused_at or time.time()) - self.started_at, 1),
         }, indent=2))
 
+    def mark_completed(self, host):
+        """Record one finished host. Appends a single line to the done log
+        (O(1)) and updates the in-memory list — the per-host checkpoint. The
+        full JSON is only rewritten at start, on pause, and on config changes."""
+        self.completed.append(host)
+        with open(self.done_file, "a") as f:
+            f.write(f"{host}\n")
+
     def save_paused(self):
         """Stamp the pause time, then persist. Called when the scan is paused so
         the state file records the PID and when work stopped for --resume."""
@@ -483,10 +491,24 @@ class ScanState:
         s = cls()
         # Point at the file we loaded; main re-keys it under the new PID.
         s.state_file = state_file
+        # The done log sits beside the JSON (…_<PID>.done). Older state files
+        # predate it; absence is fine — the JSON's completed list still applies.
+        s.done_file = state_file.with_suffix(".done")
         s.pid = data.get("pid", s.pid)
         s.targets = data["targets"]
-        s.completed = data["completed"]
         s.output_dir = data["output_dir"]
+        # Completed = JSON list ∪ done-log lines, preserving first-seen order.
+        # The done log captures hosts finished since the JSON was last written
+        # (e.g. after a hard kill that never reached save_paused).
+        completed = list(data["completed"])
+        seen = set(completed)
+        if s.done_file.exists():
+            for line in s.done_file.read_text().splitlines():
+                h = line.strip()
+                if h and h not in seen:
+                    seen.add(h)
+                    completed.append(h)
+        s.completed = completed
         # Restore the scan mode; absent (None) for normal runs and for state
         # files written before this field existed.
         s.custom_args = data.get("custom_args")
@@ -697,15 +719,20 @@ def main():
         except FileNotFoundError as e:
             sys.stderr.write(f"[!] cannot resume {args.resume!r}: {e}\n")
             sys.exit(1)
-        # Re-key state file under the new PID so subsequent pauses use the new PID.
-        old_file = state.state_file
+        # Re-key state + done files under the new PID so subsequent pauses use it.
+        old_json = state.state_file
+        old_done = state.done_file
         state.pid = os.getpid()
         state.state_file = STATE_DIR / f"nmap_wrapper_state_{state.pid}.json"
+        state.done_file = STATE_DIR / f"nmap_wrapper_state_{state.pid}.done"
+        # The re-keyed JSON now carries the full completed set (JSON ∪ old done),
+        # so this run's done log starts fresh and only logs new completions.
         state.save()
-        try:
-            old_file.unlink()
-        except FileNotFoundError:
-            pass
+        for f in (old_json, old_done, state.done_file):
+            try:
+                f.unlink()
+            except FileNotFoundError:
+                pass
         print(f"[*] Resumed from {args.resume}. "
               f"{len(state.completed)}/{len(state.targets)} hosts already done.")
     else:
@@ -860,10 +887,11 @@ def main():
         print(f"[*] State file: {state.state_file}")
     else:
         print(f"\n[*] Scan complete. {len(state.completed)}/{len(state.targets)} hosts scanned.")
-        try:
-            state.state_file.unlink()
-        except FileNotFoundError:
-            pass
+        for f in (state.state_file, state.done_file):
+            try:
+                f.unlink()
+            except FileNotFoundError:
+                pass
 
 
 if __name__ == "__main__":
