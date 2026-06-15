@@ -12,6 +12,7 @@ Usage:
     ./nmap_wrapper.py 10.0.0.0/24 --time 8h             # 8h then auto-pause
     ./nmap_wrapper.py 10.0.0.0/24 --start 14:46         # wait until 14:46
     ./nmap_wrapper.py 10.0.0.0/24 --window 17:00-07:00  # scan 5pm-7am daily, idle otherwise
+    ./nmap_wrapper.py 10.0.0.0/24 --custom '-sU -p 53,161 -T4'  # skip discovery/service, run this instead
     ./nmap_wrapper.py --resume 12345                    # resume by old PID
 
 Only run this against hosts you are authorized to scan.
@@ -22,6 +23,7 @@ import ipaddress
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
