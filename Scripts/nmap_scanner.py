@@ -336,6 +336,36 @@ def service_scan_host(host, ports, output_dir):
                     f.write(content)
 
 
+def custom_scan_host(host, custom_args, output_dir):
+    """Run a user-supplied nmap scan on one host, bypassing the discovery and
+    service stages entirely. custom_args is the already-split list of nmap
+    arguments (from --custom). Output is written to a scratch tempdir via -oA
+    and, on success, appended to CustomScans/all_hosts.{nmap,gnmap} — mirroring
+    how service_scan_host aggregates, so a paused/failed scan leaves the
+    combined files untouched and resume redoes the host cleanly."""
+    with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
+        # Plain string prefix + explicit extension, same reasoning as the
+        # service scan: Path.with_suffix would mangle IP/hostname "extensions".
+        prefix = str(Path(tmp) / "scan")
+        cmd = [NMAP_BIN] + custom_args + ["-oA", prefix, host]
+        run_nmap(cmd)
+        if _halt_work():
+            return
+
+        custom_dir = output_dir / "CustomScans"
+        custom_dir.mkdir(parents=True, exist_ok=True)
+
+        for ext in (".nmap", ".gnmap"):
+            src = Path(prefix + ext)
+            if not src.exists():
+                continue
+            content = src.read_text()
+            if not content.endswith("\n"):
+                content += "\n"
+            with open(custom_dir / f"all_hosts{ext}", "a") as f:
+                f.write(content)
+
+
 # --------------------- state (for pause/resume) ---------------------
 
 class ScanState:
@@ -567,7 +597,23 @@ def main():
                     help="only scan inside this daily window, every day (Mon-Sun); "
                          "pauses outside it and resumes when it reopens. e.g. "
                          "17:00-07:00 scans 5pm-7am. Requires APScheduler.")
+    ap.add_argument("--custom", metavar="ARGS",
+                    help="skip the discovery and service scans; instead run nmap "
+                         "with these args on each host (quote them, e.g. "
+                         "--custom '-sU -p 53,161 -T4'). Per-host output is "
+                         "aggregated into CustomScans/ instead of OpenPorts/ "
+                         "and ServiceScans/.")
     args = ap.parse_args()
+
+    # Parse the custom nmap args up front so a bad quote fails before any scan.
+    custom_args = None
+    if args.custom is not None:
+        try:
+            custom_args = shlex.split(args.custom)
+        except ValueError as e:
+            ap.error(f"could not parse --custom args: {e}")
+        if not custom_args:
+            ap.error("--custom was given no nmap arguments")
 
     check_nmap()
 
@@ -665,35 +711,49 @@ def main():
         if _pause_requested:
             break
 
-        print(f"\n[{idx + 1}/{total}] {host}: discovery scan...")
-        try:
-            ports = discovery_scan_host(host)
-        except Exception as e:
-            print(f"    [!] discovery error: {e}")
-            idx += 1  # genuine error — skip this run; resume retries it
-            continue
-        if _window_paused:
-            continue  # window closed mid-scan — redo this host once it reopens
-        if _pause_requested:
-            break
-
-        if ports:
-            print(f"    open: {', '.join(str(p) for p in ports)}")
-            update_open_ports(host, ports, output_dir)
-            print(f"[{idx + 1}/{total}] {host}: service scan on {len(ports)} port(s)...")
+        if custom_args is not None:
+            # --custom: skip discovery + service entirely, run the user's scan.
+            print(f"\n[{idx + 1}/{total}] {host}: custom scan...")
             try:
-                service_scan_host(host, ports, output_dir)
+                custom_scan_host(host, custom_args, output_dir)
             except Exception as e:
-                print(f"    [!] service scan error: {e}")
+                print(f"    [!] custom scan error: {e}")
                 idx += 1  # genuine error — skip this run; resume retries it
                 continue
             if _window_paused:
                 continue  # window closed mid-scan — redo this host once it reopens
+            if _pause_requested:
+                break
         else:
-            print(f"    no open ports")
+            print(f"\n[{idx + 1}/{total}] {host}: discovery scan...")
+            try:
+                ports = discovery_scan_host(host)
+            except Exception as e:
+                print(f"    [!] discovery error: {e}")
+                idx += 1  # genuine error — skip this run; resume retries it
+                continue
+            if _window_paused:
+                continue  # window closed mid-scan — redo this host once it reopens
+            if _pause_requested:
+                break
 
-        if _pause_requested:
-            break
+            if ports:
+                print(f"    open: {', '.join(str(p) for p in ports)}")
+                update_open_ports(host, ports, output_dir)
+                print(f"[{idx + 1}/{total}] {host}: service scan on {len(ports)} port(s)...")
+                try:
+                    service_scan_host(host, ports, output_dir)
+                except Exception as e:
+                    print(f"    [!] service scan error: {e}")
+                    idx += 1  # genuine error — skip this run; resume retries it
+                    continue
+                if _window_paused:
+                    continue  # window closed mid-scan — redo this host once it reopens
+            else:
+                print(f"    no open ports")
+
+            if _pause_requested:
+                break
 
         completed_set.add(host)
         state.completed.append(host)
