@@ -949,61 +949,49 @@ def main():
         if _pause_requested:
             break
 
-        # Per-host stage: service scan (normal) or just record/mark (custom,
-        # whose output the batch already wrote). idx advances only if this
-        # completes without a window/user interrupt.
+        # Custom mode: the one batched invocation already scanned and recorded
+        # every host in the batch, so there is nothing left to run per host.
+        # Mark the whole batch atomically (a host absent from host_ports was
+        # scanned but reported nothing open / down — not something to re-scan).
+        if custom_args is not None:
+            for host in batch:
+                ports = host_ports.get(host, [])
+                summary = (f"open {', '.join(str(p) for p in ports)}"
+                           if ports else "no open ports / down")
+                print(f"[{len(state.completed) + 1}/{total}] {host}: {summary}")
+                completed_set.add(host)
+                state.mark_completed(host)  # O(1) append checkpoint
+            idx = batch_end
+            continue
+
+        # Normal mode: service-scan each host on its own open ports. This stage
+        # is per host (each needs its own port set) and interruptible, so hosts
+        # are marked one at a time; idx advances only if the whole batch
+        # finishes without a window/user interrupt.
         interrupted = False
         for host in batch:
             if _halt_work():  # pause/window arrived between hosts
                 interrupted = True
                 break
 
-            ports = host_ports.get(host)
-
-            if custom_args is not None:
-                if ports is None:
-                    # nmap didn't report this token in the batch (e.g. a host
-                    # down with no -Pn, or a token it echoed differently) — fall
-                    # back to a single custom scan so a host is never silently
-                    # skipped. This is also the only path that writes per-port
-                    # service_scans.* copies.
-                    print(f"[{len(state.completed) + 1}/{total}] {host}: custom scan (single)...")
-                    try:
-                        custom_scan_host(host, custom_args, output_dir, open_ports_seen)
-                    except Exception as e:
-                        print(f"    [!] custom scan error: {e}")
-                        continue  # skip this host this run; resume retries it
-                else:
-                    summary = (f"open {', '.join(str(p) for p in ports)}"
-                               if ports else "no open ports")
-                    print(f"[{len(state.completed) + 1}/{total}] {host}: custom scan — {summary}")
+            # Batched discovery (with -Pn) reports every host, so absence means
+            # nothing was open — treat it as such rather than re-scanning.
+            ports = host_ports.get(host, [])
+            if ports:
+                print(f"[{len(state.completed) + 1}/{total}] {host}: "
+                      f"open {', '.join(str(p) for p in ports)} — service scan...")
+                update_open_ports(host, ports, output_dir, open_ports_seen)
+                try:
+                    service_scan_host(host, ports, output_dir)
+                except Exception as e:
+                    print(f"    [!] service scan error: {e}")
+                    continue  # skip this host this run; resume retries it
+                # Don't mark a host whose service scan was cut short.
+                if _halt_work():
+                    interrupted = True
+                    break
             else:
-                if ports is None:
-                    # Same fallback for normal discovery: single full-port scan.
-                    try:
-                        ports = discovery_scan_host(host)
-                    except Exception as e:
-                        print(f"    [!] discovery error: {e}")
-                        continue
-                    if _halt_work():
-                        interrupted = True
-                        break
-                if ports:
-                    print(f"[{len(state.completed) + 1}/{total}] {host}: "
-                          f"open {', '.join(str(p) for p in ports)} — service scan...")
-                    update_open_ports(host, ports, output_dir, open_ports_seen)
-                    try:
-                        service_scan_host(host, ports, output_dir)
-                    except Exception as e:
-                        print(f"    [!] service scan error: {e}")
-                        continue  # skip this host this run; resume retries it
-                else:
-                    print(f"[{len(state.completed) + 1}/{total}] {host}: no open ports")
-
-            # Don't mark a host whose scan was cut short by a pause/window close.
-            if _halt_work():
-                interrupted = True
-                break
+                print(f"[{len(state.completed) + 1}/{total}] {host}: no open ports")
 
             completed_set.add(host)
             state.mark_completed(host)  # O(1) append checkpoint
