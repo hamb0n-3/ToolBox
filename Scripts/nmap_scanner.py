@@ -42,7 +42,7 @@ OUTPUT_BASE = Path("./NMAP_scans")
 DISCOVERY_ARGS = [
     "-p-",
     "-T4",
-    "--min-rate", "2000",
+    "--min-rate", "5000",
     "-Pn",
     "--open",
     "--randomize-hosts"
@@ -53,7 +53,7 @@ SERVICE_ARGS = [
     "-sV",
     "-sC",
     "-Pn",
-    "--min-rate", "1500",
+    "--min-rate", "5000",
     "-T4"
 ]
 
