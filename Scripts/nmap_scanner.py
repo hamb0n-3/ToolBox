@@ -715,9 +715,16 @@ def main():
     ap.add_argument("-o", "--output-dir", metavar="DIR",
                     help=f"directory to write scan output into "
                          f"(default: {OUTPUT_BASE})")
-    ap.add_argument("--resume", metavar="PID|FILE",
-                    help="resume a paused scan by its original PID or by the "
-                         "path to its state json file")
+    ap.add_argument("--db", metavar="PATH",
+                    help="start a NEW engagement, storing state in this SQLite "
+                         "DB. A directory (or '.') creates engagement.db inside "
+                         "it; a file path is used as-is. Default when omitted: "
+                         f"{DEFAULT_DB}. Errors if the DB already exists "
+                         "(use --resume to continue it).")
+    ap.add_argument("--resume", metavar="DB",
+                    help="continue an existing engagement DB, scanning only the "
+                         "hosts it hasn't completed yet (output dir and scan "
+                         "mode are restored from the DB).")
     ap.add_argument("--time", metavar="DUR", type=parse_duration,
                     help="run for this long then auto-pause (e.g. 30s, 8m, 8h, 2d)")
     ap.add_argument("--start", metavar="HH:MM", type=parse_start_time,
