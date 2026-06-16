@@ -1,0 +1,9 @@
+# Nmap 7.99 scan initiated Mon Jun 15 23:31:55 2026 as: /usr/lib/nmap/nmap --privileged -p1-3000 --scan-delay 8ms -v -n --stats-every 10s -oA /tmp/nmap_wrapper_3hum3b1d/scan 127.0.0.1
+Nmap scan report for 127.0.0.1
+Host is up (0.000017s latency).
+Not shown: 2999 closed tcp ports (reset)
+PORT   STATE SERVICE
+22/tcp open  ssh
+
+Read data files from: /usr/share/nmap
+# Nmap done at Mon Jun 15 23:32:19 2026 -- 1 IP address (1 host up) scanned in 24.48 seconds
