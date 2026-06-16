@@ -187,6 +187,16 @@ def normalize_targets(raw_targets):
 
 # --------------------- nmap process management ---------------------
 
+# When streaming nmap live we only echo "heartbeat" lines — periodic progress,
+# discovered ports, completion — plus real warnings/errors. The rest (port
+# tables, -sC script output, etc.) is still written to the result files; it's
+# just not mirrored to the console, which would otherwise be a wall of text.
+_HEARTBEAT_RE = re.compile(
+    r"Stats:|Timing: About|Discovered open port|Nmap done|QUITTING|WARNING",
+    re.IGNORECASE,
+)
+
+
 def _halt_work():
     """True when in-progress nmap work should stop now — either a user kill/pause
     (which exits) or a scheduled window pause (which waits). Used to bail out of
@@ -270,6 +280,11 @@ def _run_nmap_streamed(cmd, prefix):
         raise
     os.close(slave)  # parent keeps only the master end
 
+    def _emit(text):
+        # Mirror only heartbeat/warning lines to the console (see _HEARTBEAT_RE).
+        if _HEARTBEAT_RE.search(text):
+            sys.stdout.write(prefix + text + "\n")
+
     chunks = []
     pending = b""
     while True:
@@ -281,12 +296,12 @@ def _run_nmap_streamed(cmd, prefix):
             break
         chunks.append(data)
         pending += data
-        # Echo complete lines as they arrive; the pty maps \n->\r\n, so strip \r.
+        # Process complete lines as they arrive; the pty maps \n->\r\n, strip \r.
         *lines, pending = pending.split(b"\n")
         for ln in lines:
-            sys.stdout.write(prefix + ln.rstrip(b"\r").decode("utf-8", "replace") + "\n")
+            _emit(ln.rstrip(b"\r").decode("utf-8", "replace"))
     if pending:
-        sys.stdout.write(prefix + pending.rstrip(b"\r").decode("utf-8", "replace") + "\n")
+        _emit(pending.rstrip(b"\r").decode("utf-8", "replace"))
     os.close(master)
 
     _current_proc.wait()
