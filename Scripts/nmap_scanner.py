@@ -39,6 +39,10 @@ from pathlib import Path
 OUTPUT_BASE = Path("./NMAP_scans")
 
 # Discovery scan: find open ports. -p- = all 65535 TCP ports.
+# --stats-every makes nmap print periodic progress + ETA to stdout even with
+# no TTY, so a long batched scan shows it's working instead of looking hung.
+STATS_INTERVAL = "30s"
+
 DISCOVERY_ARGS = [
     "-p-",
     "-T4",
@@ -46,7 +50,8 @@ DISCOVERY_ARGS = [
     "-Pn",
     "--open",
     "--randomize-hosts",
-    "-n"
+    "-n",
+    "--stats-every", STATS_INTERVAL,
 ]
 
 # Service/script scan: runs only on the open ports found above.
@@ -56,7 +61,8 @@ SERVICE_ARGS = [
     "-Pn",
     "--min-rate", "5000",
     "-T4",
-    "-n"
+    "-n",
+    "--stats-every", STATS_INTERVAL,
 ]
 
 NMAP_BIN = "nmap"
@@ -190,30 +196,45 @@ def check_nmap():
         sys.exit(1)
 
 
-def run_nmap(cmd):
+def run_nmap(cmd, stream=False, prefix="    "):
     """Run nmap in its own session so Ctrl-C at terminal does not kill it
     directly — we control killing it ourselves from the interrupt handler.
     stdin is detached so nmap's interactive-key reader does not fight with
-    input() in the signal handler."""
+    input() in the signal handler.
+
+    When stream=True, nmap's output is echoed live (each line indented with
+    `prefix`) as it arrives, so a long scan shows its --stats-every progress
+    instead of going silent until it finishes. Output is still collected and
+    returned. stderr is merged into stdout so a single stream is read, which
+    also avoids a pipe-buffer deadlock on chatty scans."""
     global _current_proc
     _current_proc = subprocess.Popen(
         cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
+        bufsize=1,  # line-buffered so streamed lines appear promptly
         start_new_session=True,
     )
-    stdout, stderr = _current_proc.communicate()
+    out_lines = []
+    # Read line by line (PEP 475: a SIGINT during the read runs the handler and
+    # the read auto-retries, so the pause/kill prompt still works).
+    for line in _current_proc.stdout:
+        out_lines.append(line)
+        if stream:
+            sys.stdout.write(prefix + line)
+    _current_proc.wait()
     rc = _current_proc.returncode if _current_proc.returncode is not None else -1
     _current_proc = None
+    stdout = "".join(out_lines)
     # Surface real nmap failures; suppress if we killed it ourselves (pause/kill
-    # or a scheduled window close).
+    # or a scheduled window close). Detail was already streamed when stream=True.
     if rc != 0 and not _halt_work():
         sys.stderr.write(f"[!] nmap exited {rc} for: {' '.join(cmd)}\n")
-        if stderr.strip():
-            sys.stderr.write(f"    {stderr.strip()}\n")
-    return rc, stdout, stderr
+        if not stream and stdout.strip():
+            sys.stderr.write(f"    {stdout.strip().splitlines()[-1]}\n")
+    return rc, stdout, ""
 
 
 def kill_current_proc():
@@ -274,11 +295,16 @@ def parse_open_ports(grep_output):
 
 def discovery_scan_host(host):
     """Full-port discovery on one host. Returns sorted list of open ports."""
-    cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", "-", host]
-    _, stdout, _ = run_nmap(cmd)
-    if _halt_work():
-        return []
-    return parse_open_ports(stdout)
+    with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
+        grep_file = str(Path(tmp) / "discovery.gnmap")
+        cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", grep_file, host]
+        run_nmap(cmd, stream=True)
+        if _halt_work():
+            return []
+        try:
+            return parse_open_ports(Path(grep_file).read_text())
+        except FileNotFoundError:
+            return []
 
 
 def parse_discovery_batch(grep_output):
