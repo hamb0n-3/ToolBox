@@ -330,12 +330,20 @@ def parse_discovery_batch(grep_output):
 def discovery_scan_batch(hosts):
     """Full-port discovery on a batch of hosts in a single nmap invocation, so
     nmap parallelizes across the whole group instead of one host at a time.
-    Returns {host: [open ports]} for every host nmap reported; {} if halted."""
-    cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", "-"] + list(hosts)
-    _, stdout, _ = run_nmap(cmd)
-    if _halt_work():
-        return {}
-    return parse_discovery_batch(stdout)
+    Returns {host: [open ports]} for every host nmap reported; {} if halted.
+
+    Greppable output goes to a temp file (not stdout) so nmap's live progress
+    can stream to the terminal while the batch runs."""
+    with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
+        grep_file = str(Path(tmp) / "discovery.gnmap")
+        cmd = [NMAP_BIN] + DISCOVERY_ARGS + ["-oG", grep_file] + list(hosts)
+        run_nmap(cmd, stream=True)
+        if _halt_work():
+            return {}
+        try:
+            return parse_discovery_batch(Path(grep_file).read_text())
+        except FileNotFoundError:
+            return {}
 
 
 def update_open_ports(host, ports, output_dir, seen_cache=None):
@@ -391,7 +399,7 @@ def service_scan_host(host, ports, output_dir):
             "-oA", prefix,
             host,
         ]
-        run_nmap(cmd)
+        run_nmap(cmd, stream=True)
         if _halt_work():
             return
 
@@ -438,8 +446,11 @@ def custom_scan_batch(hosts, custom_args, output_dir, seen_cache=None):
         # Plain string prefix + explicit extension, same reasoning as the
         # service scan. -oA always writes a .gnmap so we can extract open ports.
         prefix = str(Path(tmp) / "scan")
-        cmd = [NMAP_BIN] + custom_args + ["-oA", prefix] + list(hosts)
-        run_nmap(cmd)
+        # Inject --stats-every for live progress unless the user set their own.
+        stats = [] if any(a.startswith("--stats-every") for a in custom_args) \
+            else ["--stats-every", STATS_INTERVAL]
+        cmd = [NMAP_BIN] + custom_args + stats + ["-oA", prefix] + list(hosts)
+        run_nmap(cmd, stream=True)
         if _halt_work():
             return {}
 
