@@ -762,38 +762,30 @@ def main():
         if not cli_custom_args:
             ap.error("--custom was given no nmap arguments")
 
+    if args.db is not None and args.resume is not None:
+        ap.error("--db (start new) and --resume (continue existing) are mutually exclusive")
+
     check_nmap()
 
-    # --- load/build state ---
+    # --- load/build engagement ---
     if args.resume is not None:
         if args.targets or args.input_file:
             sys.stderr.write("[!] --resume cannot be combined with targets or -iL\n")
             sys.exit(2)
         if args.custom is not None:
             sys.stderr.write("[!] --custom cannot be combined with --resume "
-                             "(the scan mode is restored from saved state)\n")
+                             "(the scan mode is restored from the DB)\n")
             sys.exit(2)
+        db_path = EngagementDB.resolve_path(args.resume, for_new=False)
         try:
-            state = ScanState.load(args.resume)
-        except FileNotFoundError as e:
-            sys.stderr.write(f"[!] cannot resume {args.resume!r}: {e}\n")
+            state = EngagementDB.connect(db_path, create=False)
+        except FileNotFoundError:
+            sys.stderr.write(f"[!] cannot resume: no engagement DB at {db_path}\n")
             sys.exit(1)
-        # Re-key state + done files under the new PID so subsequent pauses use it.
-        old_json = state.state_file
-        old_done = state.done_file
-        state.pid = os.getpid()
-        state.state_file = STATE_DIR / f"nmap_wrapper_state_{state.pid}.json"
-        state.done_file = STATE_DIR / f"nmap_wrapper_state_{state.pid}.done"
-        # The re-keyed JSON now carries the full completed set (JSON ∪ old done),
-        # so this run's done log starts fresh and only logs new completions.
-        state.save()
-        for f in (old_json, old_done, state.done_file):
-            try:
-                f.unlink()
-            except FileNotFoundError:
-                pass
-        print(f"[*] Resumed from {args.resume}. "
-              f"{len(state.completed)}/{len(state.targets)} hosts already done.")
+        state.clear_paused()  # this run is no longer paused
+        done, total = state.counts()
+        print(f"[*] Resumed engagement {state.path}. "
+              f"{done}/{total} hosts already done.")
     else:
         raw_targets = []
         for arg in args.targets:
@@ -811,27 +803,38 @@ def main():
                 sys.stderr.write(f"[!] cannot read {args.input_file}: {e}\n")
                 sys.exit(1)
         if not raw_targets:
-            ap.error("no targets given (pass IPs/hostnames as args, use -iL FILE, or --resume PID)")
+            ap.error("no targets given (pass IPs/hostnames as args, use -iL FILE, "
+                     "or --resume DB)")
+
+        # A new engagement: refuse to clobber an existing DB.
+        db_path = EngagementDB.resolve_path(args.db, for_new=True) if args.db else DEFAULT_DB
+        if Path(db_path).exists():
+            sys.stderr.write(f"[!] engagement DB already exists at {db_path}\n"
+                             f"    use --resume {db_path} to continue it, "
+                             f"or pass --db <new_path> to start elsewhere\n")
+            sys.exit(2)
 
         # Turn full IP-IP ranges into CIDRs before handing to nmap -sL.
         raw_targets = normalize_targets(raw_targets)
 
-        state = ScanState()
+        state = EngagementDB.connect(db_path, create=True)
+        state.started_at = time.time()
         state.custom_args = cli_custom_args
+        state.output_dir = str(OUTPUT_BASE)
+        print(f"[*] New engagement: {state.path}")
         print(f"[*] Expanding {len(raw_targets)} target spec(s)...")
-        state.targets = expand_targets(raw_targets)
-        print(f"[*] {len(state.targets)} hosts to scan.")
-        state.save()
+        state.add_hosts(expand_targets(raw_targets))
+        done, total = state.counts()
+        print(f"[*] {total} hosts to scan.")
 
-    # Override the output directory if requested. Applies to fresh runs and
+    # Override the output directory if requested. Applies to new engagements and
     # resumes; on resume this redirects only the not-yet-scanned hosts, leaving
     # already-collected output in the original location.
     if args.output_dir is not None:
         state.output_dir = args.output_dir
-        state.save()
 
-    # Effective scan mode comes from state: set from --custom on a fresh run,
-    # restored from the state file on resume.
+    # Effective scan mode comes from the DB: set from --custom on a new
+    # engagement, restored from the DB on resume.
     custom_args = state.custom_args
     if custom_args is not None:
         print(f"[*] Custom scan: nmap {' '.join(custom_args)}")
