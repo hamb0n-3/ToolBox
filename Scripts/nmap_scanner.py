@@ -40,9 +40,11 @@ from pathlib import Path
 OUTPUT_BASE = Path("./NMAP_scans")
 
 # Discovery scan: find open ports. -p- = all 65535 TCP ports.
-# --stats-every makes nmap print periodic progress + ETA to stdout even with
-# no TTY, so a long batched scan shows it's working instead of looking hung.
-STATS_INTERVAL = "30s"
+# --stats-every makes nmap print periodic progress + ETA even with no TTY, and
+# -v makes it report open ports the moment they're found, so a long batched scan
+# shows continuous progress instead of looking hung. (nmap still block-buffers
+# its stdout to a pipe, so run_nmap also wraps it in `stdbuf -oL` — see below.)
+STATS_INTERVAL = "10s"
 
 DISCOVERY_ARGS = [
     "-p-",
@@ -52,6 +54,7 @@ DISCOVERY_ARGS = [
     "--open",
     "--randomize-hosts",
     "-n",
+    "-v",
     "--stats-every", STATS_INTERVAL,
 ]
 
@@ -63,10 +66,15 @@ SERVICE_ARGS = [
     "--min-rate", "5000",
     "-T4",
     "-n",
+    "-v",
     "--stats-every", STATS_INTERVAL,
 ]
 
 NMAP_BIN = "nmap"
+# nmap block-buffers its stdout when it's a pipe (not a TTY), so its progress
+# lines don't appear until ~4KB accumulates. `stdbuf -oL` forces line buffering
+# so streamed output shows up promptly. None if stdbuf isn't installed.
+_STDBUF = shutil.which("stdbuf")
 # State file lives in the directory the scan is launched from (./) so it sits
 # alongside the run and is not exposed in a shared, predictable /tmp path.
 # Note: --resume must therefore be run from the same working directory.
@@ -209,8 +217,11 @@ def run_nmap(cmd, stream=False, prefix="    "):
     returned. stderr is merged into stdout so a single stream is read, which
     also avoids a pipe-buffer deadlock on chatty scans."""
     global _current_proc
+    # Force nmap to line-buffer its stdout (it block-buffers to a pipe), so its
+    # --stats-every / -v progress reaches us live rather than in 4KB chunks.
+    launch = [_STDBUF, "-oL", "-eL", *cmd] if (stream and _STDBUF) else cmd
     _current_proc = subprocess.Popen(
-        cmd,
+        launch,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
