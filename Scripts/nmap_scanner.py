@@ -75,10 +75,8 @@ SERVICE_ARGS = [
 ]
 
 NMAP_BIN = "nmap"
-# State file lives in the directory the scan is launched from (./) so it sits
-# alongside the run and is not exposed in a shared, predictable /tmp path.
-# Note: --resume must therefore be run from the same working directory.
-STATE_DIR = Path(".")
+# Default engagement DB filename when neither --db nor --resume is given.
+DEFAULT_DB = Path("./engagement.db")
 # ========================================================
 
 _pause_requested = False
@@ -554,112 +552,6 @@ def custom_scan_batch(hosts, custom_args, output_dir, seen_cache=None):
                 f.write(content)
 
         return host_ports
-
-
-# --------------------- state (for pause/resume) ---------------------
-
-class ScanState:
-    def __init__(self, pid=None):
-        self.pid = pid if pid is not None else os.getpid()
-        self.state_file = STATE_DIR / f"nmap_wrapper_state_{self.pid}.json"
-        # Append-only companion log of completed hosts (one per line). Per-host
-        # checkpointing appends a single line here instead of rewriting the whole
-        # JSON (which would be O(n) per host → O(n^2) over a large run). The JSON
-        # holds the immutable run config; completed hosts are reconstructed by
-        # unioning JSON + this log on load.
-        self.done_file = STATE_DIR / f"nmap_wrapper_state_{self.pid}.done"
-        self.targets = []
-        self.completed = []
-        self.output_dir = str(OUTPUT_BASE)
-        # Scan mode: None for a normal discovery+service run, or the list of
-        # custom nmap args (from --custom). Persisted so --resume reuses the
-        # original mode instead of relying on the flag being re-passed.
-        self.custom_args = None
-        # Wall-clock the run began (epoch + ISO). Set once at creation and
-        # carried across resumes so elapsed time reflects the original start.
-        self.started_at = time.time()
-        # Set only when the scan is paused; None while running / on a fresh run.
-        self.paused_at = None
-
-    def save(self):
-        self.state_file.write_text(json.dumps({
-            "pid": self.pid,
-            "targets": self.targets,
-            "completed": self.completed,
-            "output_dir": self.output_dir,
-            "custom_args": self.custom_args,
-            "started_at": self.started_at,
-            "started_at_iso": datetime.fromtimestamp(self.started_at).isoformat(timespec="seconds"),
-            "paused_at": self.paused_at,
-            "paused_at_iso": (datetime.fromtimestamp(self.paused_at).isoformat(timespec="seconds")
-                              if self.paused_at is not None else None),
-            "elapsed_seconds": round((self.paused_at or time.time()) - self.started_at, 1),
-        }, indent=2))
-
-    def mark_completed(self, host):
-        """Record one finished host. Appends a single line to the done log
-        (O(1)) and updates the in-memory list — the per-host checkpoint. The
-        full JSON is only rewritten at start, on pause, and on config changes."""
-        self.completed.append(host)
-        with open(self.done_file, "a") as f:
-            f.write(f"{host}\n")
-
-    def save_paused(self):
-        """Stamp the pause time, then persist. Called when the scan is paused so
-        the state file records the PID and when work stopped for --resume."""
-        self.paused_at = time.time()
-        self.save()
-
-    @staticmethod
-    def _resolve_ref(ref):
-        """Map a --resume argument to a state-file path. Accepts either a path
-        to a state json file or a bare PID (looked up in STATE_DIR)."""
-        p = Path(str(ref))
-        if p.exists():
-            return p
-        try:
-            pid = int(ref)
-        except (ValueError, TypeError):
-            raise FileNotFoundError(
-                f"{ref!r} is neither an existing state file nor a PID")
-        return STATE_DIR / f"nmap_wrapper_state_{pid}.json"
-
-    @classmethod
-    def load(cls, ref):
-        state_file = cls._resolve_ref(ref)
-        if not state_file.exists():
-            raise FileNotFoundError(state_file)
-        data = json.loads(state_file.read_text())
-        s = cls()
-        # Point at the file we loaded; main re-keys it under the new PID.
-        s.state_file = state_file
-        # The done log sits beside the JSON (…_<PID>.done). Older state files
-        # predate it; absence is fine — the JSON's completed list still applies.
-        s.done_file = state_file.with_suffix(".done")
-        s.pid = data.get("pid", s.pid)
-        s.targets = data["targets"]
-        s.output_dir = data["output_dir"]
-        # Completed = JSON list ∪ done-log lines, preserving first-seen order.
-        # The done log captures hosts finished since the JSON was last written
-        # (e.g. after a hard kill that never reached save_paused).
-        completed = list(data["completed"])
-        seen = set(completed)
-        if s.done_file.exists():
-            for line in s.done_file.read_text().splitlines():
-                h = line.strip()
-                if h and h not in seen:
-                    seen.add(h)
-                    completed.append(h)
-        s.completed = completed
-        # Restore the scan mode; absent (None) for normal runs and for state
-        # files written before this field existed.
-        s.custom_args = data.get("custom_args")
-        # Preserve the original start time across resumes; fall back to now for
-        # state files written before this field existed.
-        s.started_at = data.get("started_at", time.time())
-        # A fresh resume is no longer paused.
-        s.paused_at = None
-        return s
 
 
 # --------------------- interrupt + time-limit handling ---------------------
