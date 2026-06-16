@@ -38,6 +38,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from engagement_db import EngagementDB
+
 # ==================== CONFIGURATION ====================
 OUTPUT_BASE = Path("./NMAP_scans")
 
