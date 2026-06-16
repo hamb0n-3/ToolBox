@@ -204,44 +204,83 @@ def check_nmap():
 def run_nmap(cmd, stream=False, prefix="    "):
     """Run nmap in its own session so Ctrl-C at terminal does not kill it
     directly — we control killing it ourselves from the interrupt handler.
-    stdin is detached so nmap's interactive-key reader does not fight with
-    input() in the signal handler.
 
-    When stream=True, nmap's output is echoed live (each line indented with
-    `prefix`) as it arrives, so a long scan shows its --stats-every progress
-    instead of going silent until it finishes. Output is still collected and
-    returned. stderr is merged into stdout so a single stream is read, which
-    also avoids a pipe-buffer deadlock on chatty scans."""
+    stream=False: capture output quietly and return it.
+    stream=True: run nmap attached to a pseudo-terminal and echo its output
+    live (each line indented with `prefix`). nmap only prints its periodic
+    --stats-every progress when stdout is a TTY, so the pty is what makes a long
+    scan show continuous progress instead of looking hung.
+
+    Returns (returncode, collected_output, "")."""
+    if stream:
+        return _run_nmap_streamed(cmd, prefix)
+
     global _current_proc
-    # Force nmap to line-buffer its stdout (it block-buffers to a pipe), so its
-    # --stats-every / -v progress reaches us live rather than in 4KB chunks.
-    launch = [_STDBUF, "-oL", "-eL", *cmd] if (stream and _STDBUF) else cmd
     _current_proc = subprocess.Popen(
-        launch,
+        cmd,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1,  # line-buffered so streamed lines appear promptly
         start_new_session=True,
     )
-    out_lines = []
-    # Read line by line (PEP 475: a SIGINT during the read runs the handler and
-    # the read auto-retries, so the pause/kill prompt still works).
-    for line in _current_proc.stdout:
-        out_lines.append(line)
-        if stream:
-            sys.stdout.write(prefix + line)
+    stdout, _ = _current_proc.communicate()
+    rc = _current_proc.returncode if _current_proc.returncode is not None else -1
+    _current_proc = None
+    if rc != 0 and not _halt_work():
+        sys.stderr.write(f"[!] nmap exited {rc} for: {' '.join(cmd)}\n")
+        if stdout.strip():
+            sys.stderr.write(f"    {stdout.strip().splitlines()[-1]}\n")
+    return rc, stdout, ""
+
+
+def _run_nmap_streamed(cmd, prefix):
+    """Run nmap with stdout/stderr on a pseudo-terminal so it line-buffers and
+    emits its (TTY-only) periodic status, echoing each line live while still
+    collecting the output. stdin stays detached so nmap's interactive-key reader
+    doesn't fight with input() in the signal handler."""
+    global _current_proc
+    master, slave = pty.openpty()
+    try:
+        _current_proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=slave,
+            stderr=slave,
+            start_new_session=True,
+        )
+    except Exception:
+        os.close(master)
+        os.close(slave)
+        _current_proc = None
+        raise
+    os.close(slave)  # parent keeps only the master end
+
+    chunks = []
+    pending = b""
+    while True:
+        try:
+            data = os.read(master, 65536)
+        except OSError:
+            break  # EIO is raised on Linux when the child (slave) closes/exits
+        if not data:
+            break
+        chunks.append(data)
+        pending += data
+        # Echo complete lines as they arrive; the pty maps \n->\r\n, so strip \r.
+        *lines, pending = pending.split(b"\n")
+        for ln in lines:
+            sys.stdout.write(prefix + ln.rstrip(b"\r").decode("utf-8", "replace") + "\n")
+    if pending:
+        sys.stdout.write(prefix + pending.rstrip(b"\r").decode("utf-8", "replace") + "\n")
+    os.close(master)
+
     _current_proc.wait()
     rc = _current_proc.returncode if _current_proc.returncode is not None else -1
     _current_proc = None
-    stdout = "".join(out_lines)
-    # Surface real nmap failures; suppress if we killed it ourselves (pause/kill
-    # or a scheduled window close). Detail was already streamed when stream=True.
+    stdout = b"".join(chunks).decode("utf-8", "replace")
     if rc != 0 and not _halt_work():
         sys.stderr.write(f"[!] nmap exited {rc} for: {' '.join(cmd)}\n")
-        if not stream and stdout.strip():
-            sys.stderr.write(f"    {stdout.strip().splitlines()[-1]}\n")
     return rc, stdout, ""
 
 
