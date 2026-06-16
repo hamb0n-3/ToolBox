@@ -235,16 +235,19 @@ def run_nmap(cmd, stream=False, prefix="    "):
 
 
 def _run_nmap_streamed(cmd, prefix):
-    """Run nmap with stdout/stderr on a pseudo-terminal so it line-buffers and
-    emits its (TTY-only) periodic status, echoing each line live while still
-    collecting the output. stdin stays detached so nmap's interactive-key reader
-    doesn't fight with input() in the signal handler."""
+    """Run nmap with all three std streams on a pseudo-terminal so it enters
+    interactive mode (which is what makes it line-buffer and emit the periodic
+    --stats-every status), echoing each line live while collecting the output.
+
+    nmap's stdin is the pty slave — its own private TTY, NOT our real stdin — so
+    its interactive-key reader can't fight with input() in the signal handler
+    (which reads fd 0). We never write to the master, so nmap just gets no keys."""
     global _current_proc
     master, slave = pty.openpty()
     try:
         _current_proc = subprocess.Popen(
             cmd,
-            stdin=subprocess.DEVNULL,
+            stdin=slave,
             stdout=slave,
             stderr=slave,
             start_new_session=True,
