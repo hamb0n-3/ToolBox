@@ -24,9 +24,9 @@ import argparse
 import ipaddress
 import json
 import os
+import pty
 import re
 import shlex
-import shutil
 import signal
 import subprocess
 import sys
