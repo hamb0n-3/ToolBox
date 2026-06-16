@@ -45,7 +45,8 @@ DISCOVERY_ARGS = [
     "--min-rate", "5000",
     "-Pn",
     "--open",
-    "--randomize-hosts"
+    "--randomize-hosts",
+    "-n"
 ]
 
 # Service/script scan: runs only on the open ports found above.
@@ -54,7 +55,8 @@ SERVICE_ARGS = [
     "-sC",
     "-Pn",
     "--min-rate", "5000",
-    "-T4"
+    "-T4",
+    "-n"
 ]
 
 NMAP_BIN = "nmap"
