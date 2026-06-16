@@ -21,6 +21,7 @@ Only run this against hosts you are authorized to scan.
 """
 
 import argparse
+import fcntl
 import ipaddress
 import json
 import os
@@ -31,6 +32,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import termios
 import threading
 import time
 from datetime import datetime, timedelta
