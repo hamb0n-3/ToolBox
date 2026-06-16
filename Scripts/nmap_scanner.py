@@ -243,16 +243,25 @@ def _run_nmap_streamed(cmd, prefix):
 
     nmap's stdin is the pty slave — its own private TTY, NOT our real stdin — so
     its interactive-key reader can't fight with input() in the signal handler
-    (which reads fd 0). We never write to the master, so nmap just gets no keys."""
+    (which reads fd 0). We never write to the master, so nmap just gets no keys.
+
+    The child makes the slave its controlling terminal (setsid + TIOCSCTTY);
+    nmap only emits its periodic status when it has a controlling TTY."""
     global _current_proc
     master, slave = pty.openpty()
+
+    def _setup_controlling_tty():
+        os.setsid()  # new session (also isolates nmap from terminal Ctrl-C)
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)  # slave becomes controlling tty
+
     try:
         _current_proc = subprocess.Popen(
             cmd,
             stdin=slave,
             stdout=slave,
             stderr=slave,
-            start_new_session=True,
+            preexec_fn=_setup_controlling_tty,
+            pass_fds=(slave,),  # keep slave open through close_fds for the ioctl
         )
     except Exception:
         os.close(master)

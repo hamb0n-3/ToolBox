@@ -1,0 +1,20 @@
+{
+  "pid": 618828,
+  "targets": [
+    "127.0.0.1"
+  ],
+  "completed": [],
+  "output_dir": "NMAP_scans",
+  "custom_args": [
+    "-p1-3000",
+    "--scan-delay",
+    "8ms",
+    "-v",
+    "-n"
+  ],
+  "started_at": 1781580715.3158917,
+  "started_at_iso": "2026-06-15T23:31:55",
+  "paused_at": null,
+  "paused_at_iso": null,
+  "elapsed_seconds": 0.0
+}
