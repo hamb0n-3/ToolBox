@@ -40,10 +40,10 @@ from pathlib import Path
 OUTPUT_BASE = Path("./NMAP_scans")
 
 # Discovery scan: find open ports. -p- = all 65535 TCP ports.
-# --stats-every makes nmap print periodic progress + ETA even with no TTY, and
-# -v makes it report open ports the moment they're found, so a long batched scan
-# shows continuous progress instead of looking hung. (nmap still block-buffers
-# its stdout to a pipe, so run_nmap also wraps it in `stdbuf -oL` — see below.)
+# -v makes nmap report open ports as they're found; --stats-every prints a
+# periodic progress + ETA line. Both keep a long batched scan visibly alive.
+# nmap only emits the periodic status when stdout is a TTY, so run_nmap attaches
+# it to a pseudo-terminal (see _run_nmap_streamed).
 STATS_INTERVAL = "10s"
 
 DISCOVERY_ARGS = [
@@ -71,10 +71,6 @@ SERVICE_ARGS = [
 ]
 
 NMAP_BIN = "nmap"
-# nmap block-buffers its stdout when it's a pipe (not a TTY), so its progress
-# lines don't appear until ~4KB accumulates. `stdbuf -oL` forces line buffering
-# so streamed output shows up promptly. None if stdbuf isn't installed.
-_STDBUF = shutil.which("stdbuf")
 # State file lives in the directory the scan is launched from (./) so it sits
 # alongside the run and is not exposed in a shared, predictable /tmp path.
 # Note: --resume must therefore be run from the same working directory.
