@@ -903,7 +903,7 @@ def main():
         # One batched nmap invocation for the whole group. Both modes return a
         # {host: [open ports]} map of the hosts nmap actually reported.
         label = "custom scan" if custom_args is not None else "discovery scan"
-        print(f"\n[{len(state.completed)}/{total} done] {label} on {len(batch)} host(s)...")
+        print(f"\n[{len(completed_set)}/{total} done] {label} on {len(batch)} host(s)...")
         try:
             if custom_args is not None:
                 host_ports = custom_scan_batch(batch, custom_args, output_dir, open_ports_seen)
@@ -927,9 +927,11 @@ def main():
                 ports = host_ports.get(host, [])
                 summary = (f"open {', '.join(str(p) for p in ports)}"
                            if ports else "no open ports / down")
-                print(f"[{len(state.completed) + 1}/{total}] {host}: {summary}")
+                print(f"[{len(completed_set) + 1}/{total}] {host}: {summary}")
+                if ports:
+                    state.record_open_ports(host, ports, "custom")
                 completed_set.add(host)
-                state.mark_completed(host)  # O(1) append checkpoint
+                state.mark_completed(host)  # per-host checkpoint (committed)
             idx = batch_end
             continue
 
@@ -947,8 +949,9 @@ def main():
             # nothing was open — treat it as such rather than re-scanning.
             ports = host_ports.get(host, [])
             if ports:
-                print(f"[{len(state.completed) + 1}/{total}] {host}: "
+                print(f"[{len(completed_set) + 1}/{total}] {host}: "
                       f"open {', '.join(str(p) for p in ports)} — service scan...")
+                state.record_open_ports(host, ports, "discovery")
                 update_open_ports(host, ports, output_dir, open_ports_seen)
                 try:
                     service_scan_host(host, ports, output_dir)
@@ -960,10 +963,10 @@ def main():
                     interrupted = True
                     break
             else:
-                print(f"[{len(state.completed) + 1}/{total}] {host}: no open ports")
+                print(f"[{len(completed_set) + 1}/{total}] {host}: no open ports")
 
             completed_set.add(host)
-            state.mark_completed(host)  # O(1) append checkpoint
+            state.mark_completed(host)  # per-host checkpoint (committed)
 
         if interrupted:
             if _pause_requested:
@@ -972,22 +975,20 @@ def main():
         idx = batch_end
 
     # --- finish ---
+    done, total = state.counts()
+    started = state.started_at or time.time()
     if _pause_requested:
-        state.save_paused()
-        elapsed = state.paused_at - state.started_at
-        print(f"\n[*] Paused. {len(state.completed)}/{len(state.targets)} hosts done.")
-        print(f"[*] PID {state.pid}, ran {elapsed:.0f}s "
-              f"(started {datetime.fromtimestamp(state.started_at).strftime('%Y-%m-%d %H:%M:%S')}, "
-              f"paused {datetime.fromtimestamp(state.paused_at).strftime('%Y-%m-%d %H:%M:%S')}).")
-        print(f"[*] Resume with: {sys.argv[0]} --resume {state.pid}")
-        print(f"[*] State file: {state.state_file}")
+        state.set_paused()
+        elapsed = time.time() - started
+        print(f"\n[*] Paused. {done}/{total} hosts done.")
+        print(f"[*] Ran {elapsed:.0f}s "
+              f"(started {datetime.fromtimestamp(started).strftime('%Y-%m-%d %H:%M:%S')}).")
+        print(f"[*] Resume with: {sys.argv[0]} --resume {state.path}")
     else:
-        print(f"\n[*] Scan complete. {len(state.completed)}/{len(state.targets)} hosts scanned.")
-        for f in (state.state_file, state.done_file):
-            try:
-                f.unlink()
-            except FileNotFoundError:
-                pass
+        state.set_meta("finished_at", repr(time.time()))
+        print(f"\n[*] Scan complete. {done}/{total} hosts scanned.")
+        print(f"[*] Engagement DB: {state.path}")
+    state.close()
 
 
 if __name__ == "__main__":
