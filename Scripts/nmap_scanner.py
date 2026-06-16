@@ -633,7 +633,7 @@ def wait_for_window(state):
     configured or we are inside it."""
     if not _window_paused:
         return
-    state.save()
+    state.commit()
     sys.stderr.write("[*] Outside scan window — waiting for it to reopen "
                      "(Ctrl-C to kill/pause)...\n")
     # Loop with a timeout so signals are delivered promptly and we re-check both
