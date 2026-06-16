@@ -857,7 +857,7 @@ def main():
         sched = start_window_scheduler(args.window)
 
     print(f"[*] PID {os.getpid()} — Ctrl-C to pause/kill; "
-          f"resume with: {sys.argv[0]} --resume {os.getpid()}")
+          f"resume with: {sys.argv[0]} --resume {state.path}")
     print(f"[*] Output: {state.output_dir}")
 
     install_interrupt_handler()
@@ -867,15 +867,16 @@ def main():
     if custom_args is None:
         (output_dir / "ServiceScans").mkdir(parents=True, exist_ok=True)
 
-    total = len(state.targets)
-    completed_set = set(state.completed)
+    targets = state.all_hosts()
+    total = len(targets)
+    completed_set = set(state.completed_hosts())
     # In-memory dedup cache for OpenPorts/[PORT]/hosts.md, so update_open_ports
     # reads each port file at most once per process instead of on every host.
     open_ports_seen = {}
     # Hosts are processed in batches, one nmap invocation per batch so nmap
     # parallelizes across the group. Normal mode: batched full-port discovery,
     # then service scans per host. Custom mode: the whole custom scan runs
-    # batched. idx is the scan cursor over state.targets; already-completed
+    # batched. idx is the scan cursor over the target list; already-completed
     # hosts are skipped when building each batch. idx only advances past a batch
     # once it finishes — a window pause mid-batch redoes the unfinished hosts
     # (completed ones are skipped); a user pause exits.
@@ -885,7 +886,7 @@ def main():
         batch = []
         batch_end = idx
         while batch_end < total and len(batch) < args.batch_size:
-            h = state.targets[batch_end]
+            h = targets[batch_end]
             batch_end += 1
             if h not in completed_set:
                 batch.append(h)
