@@ -1,5 +1,0 @@
-# Nmap 7.99 scan initiated Mon Jun 15 23:28:04 2026 as: /usr/lib/nmap/nmap --privileged -p1-3000 --scan-delay 8ms -v -n --stats-every 10s -oA /tmp/nmap_wrapper_bldojm2i/scan 127.0.0.1
-# Ports scanned: TCP(3000;1-3000) UDP(0;) SCTP(0;) PROTOCOLS(0;)
-Host: 127.0.0.1 ()	Status: Up
-Host: 127.0.0.1 ()	Ports: 22/open/tcp//ssh///	Ignored State: closed (2999)
-# Nmap done at Mon Jun 15 23:28:28 2026 -- 1 IP address (1 host up) scanned in 24.45 seconds

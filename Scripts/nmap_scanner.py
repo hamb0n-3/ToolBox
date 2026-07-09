@@ -459,9 +459,15 @@ def service_scan_host(host, ports, output_dir):
         had open
     Aggregation happens only after nmap completes successfully; a paused or
     failed scan leaves the combined files untouched so resume redoes the host
-    cleanly."""
+    cleanly.
+
+    Returns True if the scan completed and its output was aggregated, False if
+    it was halted (pause/window) before writing anything. The caller must mark
+    the host completed iff this returns True — otherwise a pause arriving in the
+    gap between aggregation and marking would make resume re-run the host and
+    duplicate the appended output."""
     if not ports:
-        return
+        return True
     port_list = ",".join(str(p) for p in ports)
 
     with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
@@ -477,7 +483,7 @@ def service_scan_host(host, ports, output_dir):
         ]
         run_nmap(cmd, stream=True)
         if _halt_work():
-            return
+            return False
 
         svc_dir = output_dir / "ServiceScans"
         svc_dir.mkdir(parents=True, exist_ok=True)
@@ -500,6 +506,8 @@ def service_scan_host(host, ports, output_dir):
                 with open(port_file, "a") as f:
                     f.write(content)
 
+    return True
+
 
 def custom_scan_batch(hosts, custom_args, output_dir, seen_cache=None):
     """Run the user's custom nmap scan on a batch of hosts in ONE invocation so
@@ -510,13 +518,16 @@ def custom_scan_batch(hosts, custom_args, output_dir, seen_cache=None):
     This does NOT write per-port service_scans.* copies: a single batched
     invocation yields one combined output file that can't be cleanly attributed
     to an individual host/port, so the per-port scan output lives only in
-    all_hosts.* here. Aggregation happens only after nmap completes (an empty
-    dict signals a halted run, so resume redoes the batch cleanly).
+    all_hosts.* here. Aggregation happens only after nmap completes.
 
-    Returns {host: [open ports]} for every host nmap reported. The invocation
-    scans every host in `hosts`; a host absent from the result was scanned but
+    Returns None if the run was halted (pause/window) before any output was
+    written, so the caller redoes the batch on resume. Otherwise returns
+    {host: [open ports]} for every host nmap reported: the invocation scans
+    every host in `hosts`, and a host absent from the map was scanned but
     reported nothing open (e.g. down without -Pn), so the caller marks it done
-    rather than re-scanning it.
+    rather than re-scanning it. A non-None return means the batch's output is
+    fully written, so the caller marks the whole batch even if a pause arrived
+    during the writes — re-running it on resume would duplicate all_hosts.*.
     """
     with tempfile.TemporaryDirectory(prefix="nmap_wrapper_") as tmp:
         # Plain string prefix + explicit extension, same reasoning as the
@@ -528,7 +539,7 @@ def custom_scan_batch(hosts, custom_args, output_dir, seen_cache=None):
         cmd = [NMAP_BIN] + custom_args + stats + ["-oA", prefix] + list(hosts)
         run_nmap(cmd, stream=True)
         if _halt_work():
-            return {}
+            return None
 
         custom_dir = output_dir / "CustomScans"
         custom_dir.mkdir(parents=True, exist_ok=True)
@@ -598,6 +609,9 @@ def start_time_limit(seconds):
             return
         sys.stderr.write(f"\n[!] Time limit ({seconds}s) reached — pausing.\n")
         _pause_requested = True
+        # Wake the main loop if it is blocked waiting for a scan window, so the
+        # pause takes effect promptly instead of after the next 30s poll.
+        _resume_event.set()
         kill_current_proc()
     threading.Thread(target=worker, daemon=True).start()
 
@@ -839,6 +853,10 @@ def main():
     if custom_args is not None:
         print(f"[*] Custom scan: nmap {' '.join(custom_args)}")
 
+    # Install the Ctrl-C handler before the scheduled-start wait so an interrupt
+    # during that wait gets the clean k/p/c prompt instead of a raw traceback.
+    install_interrupt_handler()
+
     # --- scheduled start ---
     if args.start is not None:
         wait = (args.start - datetime.now()).total_seconds()
@@ -859,8 +877,6 @@ def main():
     print(f"[*] PID {os.getpid()} — Ctrl-C to pause/kill; "
           f"resume with: {sys.argv[0]} --resume {state.path}")
     print(f"[*] Output: {state.output_dir}")
-
-    install_interrupt_handler()
 
     output_dir = Path(state.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -900,8 +916,9 @@ def main():
         if _pause_requested:
             break
 
-        # One batched nmap invocation for the whole group. Both modes return a
-        # {host: [open ports]} map of the hosts nmap actually reported.
+        # One batched nmap invocation for the whole group. Discovery returns a
+        # {host: [open ports]} map of the hosts nmap reported (empty if halted);
+        # custom returns that map, or None if it was halted before writing output.
         label = "custom scan" if custom_args is not None else "discovery scan"
         print(f"\n[{len(completed_set)}/{total} done] {label} on {len(batch)} host(s)...")
         try:
@@ -913,16 +930,20 @@ def main():
             print(f"    [!] {label} error: {e}")
             idx = batch_end  # skip this batch this run; resume retries it
             continue
-        if _window_paused:
-            continue  # window closed mid-scan — redo batch once it reopens
-        if _pause_requested:
-            break
 
         # Custom mode: the one batched invocation already scanned and recorded
         # every host in the batch, so there is nothing left to run per host.
-        # Mark the whole batch atomically (a host absent from host_ports was
-        # scanned but reported nothing open / down — not something to re-scan).
         if custom_args is not None:
+            # None means the scan was halted before any output was written, so
+            # redo the batch on resume. A non-None result means the batch's
+            # output is fully written — mark the whole batch even if a pause
+            # landed during the writes, because re-running it on resume would
+            # duplicate CustomScans/all_hosts.*. (A host absent from host_ports
+            # was scanned but reported nothing open / down — not a re-scan.)
+            if host_ports is None:
+                if _pause_requested:
+                    break
+                continue  # window closed mid-scan — redo batch once it reopens
             for host in batch:
                 ports = host_ports.get(host, [])
                 summary = (f"open {', '.join(str(p) for p in ports)}"
@@ -934,6 +955,14 @@ def main():
                 state.mark_completed(host)  # per-host checkpoint (committed)
             idx = batch_end
             continue
+
+        # Normal mode: discovery only read open ports into memory — nothing
+        # durable is written until the per-host service scans below — so a halt
+        # here loses nothing. Bail out and redo the batch when it reopens.
+        if _window_paused:
+            continue  # window closed mid-scan — redo batch once it reopens
+        if _pause_requested:
+            break
 
         # Normal mode: service-scan each host on its own open ports. This stage
         # is per host (each needs its own port set) and interruptible, so hosts
@@ -954,12 +983,16 @@ def main():
                 state.record_open_ports(host, ports, "discovery")
                 update_open_ports(host, ports, output_dir, open_ports_seen)
                 try:
-                    service_scan_host(host, ports, output_dir)
+                    completed = service_scan_host(host, ports, output_dir)
                 except Exception as e:
                     print(f"    [!] service scan error: {e}")
                     continue  # skip this host this run; resume retries it
-                # Don't mark a host whose service scan was cut short.
-                if _halt_work():
+                # service_scan_host returns False iff it was halted before
+                # writing output. Only stop if it didn't finish: when it did
+                # aggregate (True), mark the host even though a pause may have
+                # arrived just after, else resume redoes it and duplicates the
+                # appended scan files.
+                if not completed:
                     interrupted = True
                     break
             else:

