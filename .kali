@@ -168,7 +168,9 @@ unalias o s 2>/dev/null; true
 o() { command gedit "$TOOLBOX/.kali" & }
 s() { grep -i "$1" "$TOOLBOX/.kali" --color; }
 
-
+# Quick start
+llmgui() {python "$CODEVAULT"/AI/Scripts/GUI/llm-gui.py}
+llmgui_serve() {tailscale serve --https=443 http://localhost:"$1"}
 #############################################################
 #  2  SCANNING / RECON
 #############################################################
