@@ -78,14 +78,20 @@ toolbox() { cd "$TOOLBOX" || return; }  # [nav repo]
 vt_scan() {"$TOOLBOX"/releases/System/vt_scan/vt_scan --format md "$1"}
 source_venv() {source ~/.venv/bin/activate} # pip
 CodeVault() {
+  local msg="${1:-.}" start="$PWD"
   ssh-add -l >/dev/null 2>&1 || eval "$(ssh-agent)" >/dev/null
   ssh-add "$GITHUB_KEY" 2>/dev/null || { echo "CodeVault: cannot load key: $GITHUB_KEY" >&2; return 1; }
   cd "$CODEVAULT" || return 1
-  git pull && git add . && git commit -m "${1:-.}" ; git push
-  cd - || return 1
+  git pull --ff-only --recurse-submodules 2>/dev/null || true
+  # commit & push edits inside each submodule first, then the pointer bumps here
+  git config -f .gitmodules --get-regexp '\.path$' 2>/dev/null | awk '{print $2}' | while read -r p; do
+    [ -n "$(git -C "$p" status --porcelain)" ] || continue
+    ( cd "$p" && git add -A && git commit -m "$msg" && git push origin HEAD:main )
+  done
+  git add -A && git commit -m "$msg" 2>/dev/null ; git push
   cd "$TOOLBOX" || return 1
-  git add . && git commit -m "${1:-.}" ; git push
-  cd -
+  git add -A && git commit -m "$msg" 2>/dev/null ; git push
+  cd "$start"
 }
 # Symlink ./src (in the CURRENT dir) -> the matching source dir under $CODEVAULT.
 # Match is by leaf folder name (basename), so intermediate paths need not line up.
@@ -124,7 +130,7 @@ pybin() {
     *) python3 "$PYBIN" "$@" ;;
   esac
 }  # [pybin build portable docker]
-pybin_and_scan() { python3 "$CODEVAULT/Filesystem/pybin_and_scan.py" "$@"; }  # [vt pybin build scan]
+pybin_and_scan() { python3 "$CODEVAULT/filesystem/pybin_and_scan.py" "$@"; }  # [vt pybin build scan]
 
 nen() {
   local raw nodes
@@ -169,7 +175,7 @@ o() { command gedit "$TOOLBOX/.kali" & }
 s() { grep -i "$1" "$TOOLBOX/.kali" --color; }
 
 # Quick start
-llmgui() {python "$CODEVAULT"/AI/Scripts/GUI/llm-gui/llm-gui.py}
+llmgui() {python "$CODEVAULT"/ai/Scripts/GUI/llm-gui/llm-gui.py}
 llmgui_serve() {tailscale serve --https=443 http://localhost:"$1"}
 #############################################################
 #  2  SCANNING / RECON
